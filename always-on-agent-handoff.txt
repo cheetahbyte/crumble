@@ -1,0 +1,127 @@
+ALWAYS ON AGENT BRAINSTORMING HANDOFF
+Conversation date: 2 October 2026
+Recipient: coding agent
+Status: exploration, not an approved implementation specification
+
+Purpose
+Continue brainstorming a personal always-on assistant built around Pi Durable, Cloudflare Durable Objects, and container execution. First challenge the architecture and clarify unresolved decisions. Do not begin implementation or deployment merely because this document describes a candidate design.
+
+1. Motivation and requirements
+
+The user has used Hermes most and likes skills that improve over time. They also use Pi for coding and value being able to extend its behavior when asked. Their interest is in building the complete assistant application, using existing LLMs; they do not want to train their own model.
+
+They find Hermes brittle, dislike its dashboard and design language, and feel it includes too much functionality they will never use. Proper multi-tenancy is a deal breaker: Hermes profiles do not meet their expectations. At minimum, the assistant should support the user and their girlfriend with separate private data and credentials.
+
+The user wants polish and low operational friction, and does not have hours to spend continually configuring an assistant. They are attracted to ownership, control, security, and privacy, but recognize that maintaining a custom application creates work. A smaller custom codebase might reduce exposed functionality; its security superiority has not been established.
+
+The user says they have "unlimited Railway." Treat this as their reported hosting entitlement, not a verified promise about quotas or Docker capabilities. They currently run Hermes on their host, with execution inside Docker. Do not assume they mount the Docker socket into agent execution containers; they explicitly challenged that unsolicited assumption.
+
+2. Actual use cases
+
+- Morning brief summarizing received emails.
+- Chatting with the assistant through Discord.
+- High-level delegation of coding work, with results reported back.
+- Scheduled proactive messages, such as a morning brief.
+- Extending capabilities over time, beyond editing skills alone.
+
+An email provider, coding-agent protocol, model provider, dashboard design, and exact scope of autonomous actions have not been selected in this conversation.
+
+3. Candidate architecture
+
+The original idea was for the "brain" to live in Cloudflare Durable Objects, using Pi Durable, while tasks execute inside Docker containers, similar to pre-AI development containers.
+
+A possible decomposition discussed:
+- Authenticated ingress routes requests to the appropriate tenant.
+- A Durable Object per tenant owns agent state and potentially the Pi Durable harness.
+- Remote execution environments provide files, shell commands, builds, and tests.
+- A lightweight Discord gateway listener runs continuously on Railway.
+- Container jobs send progress or completion callbacks to the coordinator.
+- Simple API tools, such as email reads, need not run in a container.
+
+THIS IS NOT FULLY AGREED. A misunderstanding arose over whether containers execute individual tools or run complete Pi coding agents. The user said the assistant was not talking about the same thing; the discussion then moved to explaining Durable Objects. Preserve this unresolved distinction rather than treating the assistant's decomposition as the user's final choice.
+
+Compare:
+A. Pi Durable's model loop runs in the Durable Object; tools use remote containers.
+B. The Durable Object coordinates jobs; full Pi agents run inside containers.
+C. A simpler Railway backend runs Pi Durable and persists its state without Cloudflare.
+
+The user has not committed to A, B, or C. Also clarify whether containers are per task, per conversation, per tenant, or persistent project environments.
+
+4. What Durable Objects provide
+
+A Durable Object combines an addressable application instance with private persistent storage. Requests to the same object identity reach that object's logical owner. Its code can act on state and coordinate work; it is more than a database.
+
+Saved data survives restarts. In-memory code is not guaranteed to run continuously, and arbitrary interrupted work does not automatically complete. The application must arrange wakeups, reopen its harness, and resume or reconcile tasks. Authenticated tenant routing remains an application responsibility.
+
+A regular backend plus a database can provide equivalent application behavior. Durable Objects are one packaging and coordination option, not a requirement.
+
+5. Pi Durable findings
+
+The official announcement describes Pi Durable as an experimental framework, separate from the Pi coding CLI. It supplies durable conversations, tasks, documents, configurable extensions, and checkpoint/recovery machinery.
+
+Its portable storage code can run in a Cloudflare Durable Object with an adapter. Tools can use a remote execution environment while the harness runs elsewhere. This supports the broad proposal, but does not establish that an unchanged Pi CLI or existing Pi extensions will run in a Durable Object.
+
+Investigate the concrete Cloudflare storage adapter, runtime dependencies, model-provider compatibility, extension portability, lifecycle integration, and resume behavior before proposing an implementation.
+
+6. Discord and scheduled execution
+
+Ordinary Discord messages arrive over a persistent Gateway connection requiring heartbeats. Proposed approach: keep only a lightweight listener continuously running on Railway. It forwards authenticated events to the correct Durable Object; the object wakes, processes the message, persists state, and becomes eligible to sleep when work ends.
+
+Slash commands can instead use HTTP interactions; this was identified as an alternative, not selected. Verify acknowledgement deadlines and long-running response handling if using that path.
+
+For asynchronous coding: persist a job ID, dispatch the work, and end the active handler when appropriate. The executor later sends a callback that wakes the coordinator. A running model loop or unresolved tool promise cannot simply be assumed to survive object eviction.
+
+Durable Object alarms can wake an object for scheduled work. Store schedules, process due events, and set the next alarm. One object has one platform alarm at a time, so multiple schedules require selecting the next due event in application logic.
+
+For a daily 08:00 Europe/Berlin brief, calculate the next local occurrence to handle daylight-saving changes. Alarm delivery can retry. Recording "sent" state alone does not guarantee exactly-once delivery if a process fails between sending to Discord and persisting success; design duplicate detection and reconciliation.
+
+7. Reliability and extension boundaries
+
+Persist job identity, lifecycle state, and results independently of a live connection. If a PR is created and the connection drops, reconnect to or reconcile the original job rather than blindly create another PR. Distinguish retry-safe reads from actions with external side effects.
+
+Proposed boundary for self-extension: the agent develops and tests new capabilities in its execution environment, while tenant routing, authorization, and credential policy stay outside code it can freely alter. This was advice, not an agreed approval workflow. Decide which changes can activate automatically and how versioning, validation, rollback, and running sessions behave.
+
+Scope credentials to the tenant and job. Preserve workspace state or artifacts outside disposable containers where needed. Decide budgets, cancellation, progress delivery, and recovery from lost callbacks.
+
+8. Cost discussion
+
+Cloudflare prices were checked on 2 October 2026:
+- Workers Paid minimum: USD 5/month.
+- Included Durable Object requests: 1 million/month.
+- Included duration: 400,000 GB-seconds/month.
+- Duration overage: USD 12.50 per million GB-seconds; billable excess is rounded up to the next million.
+- Each object is billed for an allocated 128 MB.
+- SQLite storage includes 5 GB-month, 25 billion rows read/month, and 50 million rows written/month.
+- A free tier exists for SQLite-backed objects.
+
+Illustrative estimate: two modestly used objects could remain within allowances, leaving the USD 5 base charge. Two objects continuously active for a 30-day month use 663,552 GB-seconds; after the allowance, duration rounds to one million billable GB-seconds, giving USD 17.50 including the base fee, assuming other usage stays within allowances.
+
+This is NOT a total-system estimate or a worst-case cap. It excludes models, Railway, container compute, additional services, tax, and other account workloads. Waiting for external I/O can incur object duration charges. Check Pi Durable's timers/background work do not unintentionally prevent hibernation.
+
+9. Existing projects discovered
+
+- ClopinetteAI: https://github.com/marceloeatworld/clopinette-ai
+  README describes a Hermes-inspired TypeScript assistant with one Durable Object per user, private SQLite and memory/skills, Discord slash commands and a DM bridge, plus other integrations. Closest functional reference found. Its exact Pi-plus-Docker fit, security, maturity, and reliability were not tested.
+
+- Cloudflare Agents SDK: https://github.com/cloudflare/agents
+  Official framework based on Durable Objects, with state, scheduling, and tool integrations. Useful reference; compare overlap with Pi Durable rather than assuming both are needed.
+
+- Moltworker: https://github.com/cloudflare/moltworker
+  Runs OpenClaw inside Cloudflare Sandbox containers. Repository labels it an experimental, unsupported proof of concept. Its placement of the runtime differs from running the Pi harness directly in a Durable Object.
+
+No complete Pi Durable + Discord + remote Docker implementation was verified in the conversation. Do not interpret that as proof that none exists.
+
+10. Suggested next brainstorming deliverable
+
+Start with the unresolved runtime placement and container lifetime questions. Compare the three architecture options against low maintenance, extensibility, tenant isolation, recovery, cost, and polish. Explicitly consider whether Cloudflare adds enough value given the user's Railway access.
+
+Propose a narrow first slice: two isolated users, Discord chat, an email brief, and one coding-job delegation path. Separate required features from optional future additions. Identify the smallest compatibility experiment needed before committing to Cloudflare. Keep confirmed requirements, recommendations, and unanswered questions distinct.
+
+Sources checked
+Pi Durable announcement: https://earendil.com/posts/pi-durable/
+Durable Objects pricing: https://developers.cloudflare.com/durable-objects/platform/pricing/
+Workers pricing: https://developers.cloudflare.com/workers/platform/pricing/
+Durable Object alarms: https://developers.cloudflare.com/durable-objects/api/alarms/
+Discord Gateway: https://docs.discord.com/developers/events/gateway
+Discord interactions: https://docs.discord.com/developers/interactions/receiving-and-responding
+
