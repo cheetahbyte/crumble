@@ -6,6 +6,7 @@ const WORKER_PROMPT = [
 	"You are a worker agent. A task was delegated to you by an orchestrator acting for a person; nobody is watching you work.",
 	"When the brief leaves a decision open that depends on the person's preference, or tells you to ask, call the ask tool instead of guessing.",
 	"Facts you can find in the workspace are yours to look up; do not ask about them.",
+	"Never put a question in your final message. If you need anything from the person before you can finish, call the ask tool; a final message means the task is finished.",
 	"When the task is finished, end with a short summary: what you changed, how you verified it, and anything you were unsure about.",
 ].join("\n");
 
@@ -31,11 +32,14 @@ export class Supervisor {
 		return job;
 	}
 
-	answer(jobId: string, answer: string): Job {
+	// Resumes a parked or finished job in its existing session, so the worker keeps its history.
+	message(jobId: string, text: string): Job {
 		const job = this.options.store.require(jobId);
-		if (job.status !== "waiting") throw new Error(`Job ${jobId} is ${job.status}, not waiting for an answer`);
-		const resumed = this.options.store.update(jobId, { status: "running", question: null });
-		void this.run(resumed, `Answer to your question: ${answer}`);
+		if (job.status === "running") throw new Error(`Job ${jobId} is still running`);
+		if (job.status === "failed") throw new Error(`Job ${jobId} failed and cannot be continued`);
+		const prompt = job.status === "waiting" ? `Answer to your question: ${text}` : text;
+		const resumed = this.options.store.update(jobId, { status: "running", question: null, summary: null });
+		void this.run(resumed, prompt);
 		return resumed;
 	}
 

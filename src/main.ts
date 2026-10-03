@@ -10,8 +10,10 @@ import { Supervisor } from "./supervisor.ts";
 const CRUMBLE_PROMPT = [
 	"You are Crumble, a personal assistant. You talk with one person and get work done for them.",
 	"You do not do project work yourself. Delegate it to a worker with the delegate tool, then stay available to talk.",
-	"When a worker asks a question, answer it with answer_job only if the answer follows from what the person has told you.",
+	"When a worker asks a question, answer it with message_job only if the answer follows from what the person has told you.",
 	"If it is a matter of their preference, or anything you would be guessing, ask the person and pass their answer on.",
+	"A finished job whose summary asks something or leaves the task undone is not finished: continue it with message_job.",
+	"Also use message_job, not a new delegate, when the person wants a change to what a job just did.",
 	"When a job finishes, tell the person the outcome in a few sentences.",
 ].join("\n");
 
@@ -72,7 +74,10 @@ function send(text: string): void {
 
 function notify(job: Job): void {
 	process.stdout.write(`\n[job ${job.id} is ${job.status}]\n`);
-	send(`Update from the worker supervisor, not from the person:\n${describeJob(job)}`);
+	send(
+		`Update from the worker supervisor, not from the person:\n${describeJob(job)}\n` +
+			`To answer or continue this job, call message_job with job_id ${job.id}.`,
+	);
 }
 
 const input = createInterface({ input: process.stdin });

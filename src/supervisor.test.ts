@@ -55,7 +55,7 @@ test("a question parks the job, and the answer resumes the same session", async 
 	assert.equal(parked.question, "which colour?");
 
 	settled = next();
-	assert.equal(supervisor.answer(job.id, "blue").status, "running");
+	assert.equal(supervisor.message(job.id, "blue").status, "running");
 	const done = await settled;
 	assert.equal(done.status, "done");
 	assert.equal(done.question, null);
@@ -75,10 +75,26 @@ test("a worker that exits mid-run fails the job and keeps its stderr", async () 
 	assert.match(failed.error ?? "", /boom/);
 });
 
-test("answering a job that is not waiting is rejected", async () => {
+test("a follow-up to a finished job resumes the same session", async () => {
+	const { supervisor, spawned, next } = setup();
+	let settled = next();
+	const job = supervisor.delegate("demo", "add a feature");
+	await settled;
+
+	settled = next();
+	assert.equal(supervisor.message(job.id, "use JavaScript").status, "running");
+	const done = await settled;
+	assert.equal(done.status, "done");
+	assert.equal(done.summary, "did: use JavaScript");
+
+	assert.equal(spawned.length, 2);
+	for (const args of spawned) assert.equal(args[args.indexOf("--session-id") + 1], job.id);
+});
+
+test("messaging a job that is still running is rejected", async () => {
 	const { supervisor, next } = setup();
 	const settled = next();
 	const job = supervisor.delegate("demo", "add a feature");
+	assert.throws(() => supervisor.message(job.id, "blue"), /still running/);
 	await settled;
-	assert.throws(() => supervisor.answer(job.id, "blue"), /not waiting/);
 });

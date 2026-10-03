@@ -41,7 +41,7 @@ assert.equal(parked.status, "waiting");
 assert.ok(parked.question);
 
 waiting = nextSettled();
-supervisor.answer(parked.id, `The phrase is "${PHRASE}, <name>!"`);
+supervisor.message(parked.id, `The phrase is "${PHRASE}, <name>!"`);
 const finished = await waiting;
 console.log(`second run settled: ${finished.status}\nsummary: ${finished.summary}\nerror: ${finished.error}`);
 assert.equal(finished.status, "done");

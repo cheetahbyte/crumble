@@ -27,8 +27,10 @@ export function delegateExtension(supervisor: Supervisor, store: JobStore, works
 			name: "delegate",
 			label: "Delegate",
 			description:
-				"Hand a task to a worker agent that runs in the background inside a project workspace. Returns a job id at once; " +
-				"you are told when the worker finishes or asks a question. The worker sees only the brief, so make it complete.",
+				"Start a new job: hand a task to a fresh worker agent that runs in the background inside a project workspace. " +
+				"Returns a job id at once; you are told when the worker finishes or asks a question. " +
+				"A fresh worker knows nothing about earlier jobs and sees only the brief, so make it complete. " +
+				"Never use this to change, correct or extend what an earlier job did; use message_job with that job's id.",
 			parameters: Type.Object({
 				project: Type.String({ description: "Name of the project workspace. Use list_projects to see them." }),
 				brief: Type.String({ description: "What to do, the constraints, and what the person cares about." }),
@@ -43,15 +45,17 @@ export function delegateExtension(supervisor: Supervisor, store: JobStore, works
 		});
 
 		pi.registerTool({
-			name: "answer_job",
-			label: "Answer job",
-			description: "Answer the question a waiting job asked. The worker is resumed with the answer.",
+			name: "message_job",
+			label: "Message job",
+			description:
+				"Send a message to an existing job: the answer to the question a waiting job asked, or a follow-up to a finished job. " +
+				"The same worker resumes with everything it did before. Use this, not delegate, for anything that continues a job.",
 			parameters: Type.Object({
 				job_id: Type.String(),
-				answer: Type.String(),
+				message: Type.String(),
 			}),
 			execute: async (_toolCallId, params) => {
-				const job = supervisor.answer(params.job_id, params.answer);
+				const job = supervisor.message(params.job_id, params.message);
 				return text(`Resumed job ${job.id}.`);
 			},
 		});
