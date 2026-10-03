@@ -10,7 +10,7 @@
     "spike": "node scripts/spike.ts",
     "check": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",
-    "worker:build": "docker build -t crumble-worker -f docker/Dockerfile.worker ."
+    "sandbox:build": "docker build -t crumble-sandbox -f docker/Dockerfile.sandbox docker"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.0.0",

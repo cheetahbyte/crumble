@@ -11,7 +11,11 @@ import { Supervisor } from "../src/supervisor.ts";
 const PHRASE = "Bis bald und alles Gute";
 const BRIEF =
 	"Add an exported function farewell(name) to greet.js with a test in greet.test.js, and run the tests. " +
-	"The person has a preferred farewell phrase that is not written down anywhere. Ask for it before writing any code.";
+	"The person has a preferred farewell phrase that is not written down anywhere. Ask for it before writing any code. " +
+	"In your final summary, include the output of `uname -s`.";
+
+const workspace = join(config.workspacesDir, "demo");
+assert.ok(!readFileSync(join(workspace, "greet.js"), "utf8").includes(PHRASE), "demo project is in its initial state");
 
 mkdirSync(config.jobsDir, { recursive: true });
 const store = new JobStore(join(config.dataDir, "crumble.db"));
@@ -21,6 +25,7 @@ const nextSettled = () => new Promise<Job>((resolve) => (settle = resolve));
 const supervisor = new Supervisor({
 	store,
 	runner: createRunner(),
+	askExtension: config.askExtension,
 	provider: config.provider,
 	model: config.model,
 	onSettled: (job) => settle?.(job),
@@ -41,7 +46,7 @@ const finished = await waiting;
 console.log(`second run settled: ${finished.status}\nsummary: ${finished.summary}\nerror: ${finished.error}`);
 assert.equal(finished.status, "done");
 
-const workspace = join(config.workspacesDir, "demo");
+if (process.env.CRUMBLE_RUNNER !== "host") assert.match(finished.summary ?? "", /Linux/, "tools ran in the sandbox");
 assert.ok(readFileSync(join(workspace, "greet.js"), "utf8").includes(PHRASE), "greet.js contains the answered phrase");
 execFileSync("npm", ["test"], { cwd: workspace, stdio: "inherit" });
 console.log("spike passed");

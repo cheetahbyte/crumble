@@ -12,6 +12,7 @@ const WORKER_PROMPT = [
 export interface SupervisorOptions {
 	store: JobStore;
 	runner: WorkerRunner;
+	askExtension: string;
 	provider: string;
 	model: string;
 	onSettled: (job: Job) => void;
@@ -39,8 +40,7 @@ export class Supervisor {
 	}
 
 	private async run(job: Job, message: string): Promise<void> {
-		const { store, runner, provider, model, onSettled } = this.options;
-		const paths = runner.paths(job);
+		const { store, runner, askExtension, provider, model, onSettled } = this.options;
 		// --session-id creates the session on the first run and reopens it on every resume.
 		const rpc = new PiRpc(
 			runner.spawn(job, [
@@ -49,7 +49,7 @@ export class Supervisor {
 				"--session-id",
 				job.id,
 				"--session-dir",
-				paths.sessionDir,
+				runner.sessionDir(job),
 				"--provider",
 				provider,
 				"--model",
@@ -58,8 +58,10 @@ export class Supervisor {
 				"--no-skills",
 				"--no-prompt-templates",
 				"--no-approve",
+				"--tools",
+				"read,bash,edit,write,ask",
 				"-e",
-				paths.askExtension,
+				askExtension,
 				"--append-system-prompt",
 				WORKER_PROMPT,
 			]),

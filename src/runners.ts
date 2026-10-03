@@ -1,67 +1,86 @@
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Job } from "./jobs.ts";
 
-export interface WorkerPaths {
-	sessionDir: string;
-	askExtension: string;
-}
-
 export interface WorkerRunner {
-	paths(job: Job): WorkerPaths;
+	sessionDir(job: Job): string;
 	spawn(job: Job, piArgs: string[]): ChildProcessWithoutNullStreams;
 }
 
 export interface RunnerDirs {
 	jobsDir: string;
 	workspacesDir: string;
-	askExtension: string;
 }
 
-// Unsandboxed: the worker runs as a plain pi process on this machine with the host's Pi login.
+function prepareSessionDir(dirs: RunnerDirs, job: Job): string {
+	const dir = join(dirs.jobsDir, job.id, "sessions");
+	mkdirSync(dir, { recursive: true });
+	return dir;
+}
+
+// Unsandboxed: the worker's tools act directly on this machine.
 export function hostRunner(dirs: RunnerDirs): WorkerRunner {
 	return {
-		paths: (job) => ({ sessionDir: join(dirs.jobsDir, job.id, "sessions"), askExtension: dirs.askExtension }),
-		spawn(job, piArgs) {
-			mkdirSync(join(dirs.jobsDir, job.id, "sessions"), { recursive: true });
-			return spawn("pi", piArgs, { cwd: join(dirs.workspacesDir, job.project) });
-		},
+		sessionDir: (job) => prepareSessionDir(dirs, job),
+		spawn: (job, piArgs) => spawn("pi", piArgs, { cwd: join(dirs.workspacesDir, job.project) }),
 	};
 }
 
-export interface DockerOptions {
+export interface SandboxOptions {
 	image: string;
-	// Names of host environment variables forwarded to the worker, such as a provider API key.
-	envPassthrough: string[];
+	sandboxExtension: string;
 }
 
-export function dockerRunner(dirs: RunnerDirs, options: DockerOptions): WorkerRunner {
+function ensureSandbox(name: string, workspace: string, image: string): void {
+	let running = "";
+	try {
+		running = execFileSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { stdio: ["ignore", "pipe", "ignore"] })
+			.toString()
+			.trim();
+	} catch {
+		// No container with this name yet.
+	}
+	if (running === "true") return;
+	if (running === "false") execFileSync("docker", ["rm", name], { stdio: "ignore" });
+	execFileSync(
+		"docker",
+		[
+			"run",
+			"-d",
+			"--name",
+			name,
+			"--cap-drop",
+			"ALL",
+			"--security-opt",
+			"no-new-privileges",
+			"--pids-limit",
+			"512",
+			"-v",
+			`${workspace}:/workspace`,
+			"-w",
+			"/workspace",
+			image,
+			"sleep",
+			"infinity",
+		],
+		{ stdio: "ignore" },
+	);
+}
+
+// The worker's Pi process runs on the host with the host's Pi login; its file and shell tools
+// run in one long-lived container per project.
+export function sandboxRunner(dirs: RunnerDirs, options: SandboxOptions): WorkerRunner {
 	return {
-		paths: () => ({ sessionDir: "/job/sessions", askExtension: "/opt/crumble/ask.ts" }),
+		sessionDir: (job) => prepareSessionDir(dirs, job),
 		spawn(job, piArgs) {
-			const jobDir = join(dirs.jobsDir, job.id);
-			mkdirSync(join(jobDir, "sessions"), { recursive: true });
-			mkdirSync(join(jobDir, "agent"), { recursive: true });
-			const args = [
-				"run",
-				"--rm",
-				"-i",
-				"--name",
-				`crumble-job-${job.id}`,
-				"-v",
-				`${join(dirs.workspacesDir, job.project)}:/workspace`,
-				"-v",
-				`${jobDir}:/job`,
-				"-e",
-				"PI_CODING_AGENT_DIR=/job/agent",
-				"-e",
-				"PI_SKIP_VERSION_CHECK=1",
-				...options.envPassthrough.flatMap((name) => ["-e", name]),
-				options.image,
-				...piArgs,
-			];
-			return spawn("docker", args);
+			const workspace = join(dirs.workspacesDir, job.project);
+			const container = `crumble-sandbox-${job.project}`;
+			ensureSandbox(container, workspace, options.image);
+			return spawn("pi", [...piArgs, "-e", options.sandboxExtension], {
+				cwd: workspace,
+				env: { ...process.env, CRUMBLE_SANDBOX_CONTAINER: container },
+			});
 		},
 	};
 }

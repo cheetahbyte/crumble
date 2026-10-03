@@ -14,7 +14,7 @@ function setup() {
 	const settled: Job[] = [];
 	let wake: (() => void) | undefined;
 	const runner: WorkerRunner = {
-		paths: () => ({ sessionDir: "/sessions", askExtension: "/ask.ts" }),
+		sessionDir: () => "/sessions",
 		spawn(_job, piArgs) {
 			spawned.push(piArgs);
 			return spawn(process.execPath, [fakeWorker]);
@@ -23,6 +23,7 @@ function setup() {
 	const supervisor = new Supervisor({
 		store,
 		runner,
+		askExtension: "/ask.ts",
 		provider: "test-provider",
 		model: "test-model",
 		onSettled: (job) => {

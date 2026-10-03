@@ -27,6 +27,7 @@ const store = new JobStore(join(config.dataDir, "crumble.db"));
 const supervisor = new Supervisor({
 	store,
 	runner: createRunner(),
+	askExtension: config.askExtension,
 	provider: config.provider,
 	model: config.model,
 	onSettled: (job) => notify(job),
