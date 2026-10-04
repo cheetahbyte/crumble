@@ -1,0 +1,11 @@
+FROM node:24-bookworm-slim
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=0
+WORKDIR /opt/crumble
+RUN npm install --omit=dev --no-audit --no-fund --save-exact playwright@1.63.0 \
+  && npx playwright install --with-deps chromium \
+  && rm -rf /root/.npm
+
+COPY browser-server.mjs browser-client.mjs ./
+EXPOSE 4173
+CMD ["node", "/opt/crumble/browser-server.mjs"]

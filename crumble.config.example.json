@@ -1,0 +1,15 @@
+{
+  "provider": "openai",
+  "model": "gpt-6-luna",
+  "runner": "sandbox",
+  "tenants": [
+    {
+      "id": "you",
+      "timezone": "Europe/Berlin"
+    },
+    {
+      "id": "partner",
+      "timezone": "Europe/Berlin"
+    }
+  ]
+}

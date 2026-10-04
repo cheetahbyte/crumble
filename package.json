@@ -6,14 +6,20 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/main.ts",
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "service": "node --env-file-if-exists=.env src/main.ts",
+    "auth": "node scripts/auth.ts",
+    "doctor": "node --env-file-if-exists=.env scripts/doctor.ts",
     "spike": "node scripts/spike.ts",
     "check": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\"",
-    "sandbox:build": "docker build -t crumble-sandbox -f docker/Dockerfile.sandbox docker"
+    "sandbox:build": "docker build -t crumble-sandbox -f docker/Dockerfile.sandbox docker",
+    "browser:build": "docker build -t crumble-browser -f docker/Dockerfile.browser docker"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "1.0.0",
+    "cron-parser": "5.10.1",
+    "discord.js": "^14.27.0",
     "typebox": "^1.3.34"
   },
   "devDependencies": {

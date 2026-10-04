@@ -1,8 +1,9 @@
 #!/bin/sh
-# Creates a throwaway project at workspaces/demo for workers to operate on.
+# Creates a throwaway demo project in the selected tenant's private workspaces.
 set -eu
 
-dir="$(cd "$(dirname "$0")/.." && pwd)/workspaces/demo"
+root="$(cd "$(dirname "$0")/.." && pwd)"
+dir="$(cd "$root" && node --input-type=module -e 'import {loadAppConfig} from "./src/config.ts"; import {prepareTenant} from "./src/tenants.ts"; const config=loadAppConfig(); const tenant=config.tenants.find(t=>t.id===config.selectedTenantId); prepareTenant(tenant); process.stdout.write(tenant.workspacesDir);')/demo"
 if [ -e "$dir" ]; then
   echo "$dir already exists" >&2
   exit 1

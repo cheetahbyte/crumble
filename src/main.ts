@@ -1,91 +1,175 @@
-import { mkdirSync } from "node:fs";
+import { fork, type ChildProcess } from "node:child_process";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
-import { createAgentSession, DefaultResourceLoader, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { config, createRunner } from "./config.ts";
-import { delegateExtension, describeJob } from "./extensions/delegate.ts";
-import { type Job, JobStore } from "./jobs.ts";
-import { Supervisor } from "./supervisor.ts";
+import { createDiscordChannel, type DiscordChannel } from "./channels/discord.ts";
+import { loadAppConfig } from "./config.ts";
+import type { ParentMessage, TenantMessage } from "./protocol.ts";
+import { AssistantState, type InboundSource } from "./state.ts";
+import { prepareTenant, tenantEnvironment, type TenantConfig } from "./tenants.ts";
 
-const CRUMBLE_PROMPT = [
-	"You are Crumble, a personal assistant. You talk with one person and get work done for them.",
-	"You do not do project work yourself. Delegate it to a worker with the delegate tool, then stay available to talk.",
-	"When a worker asks a question, answer it with message_job only if the answer follows from what the person has told you.",
-	"If it is a matter of their preference, or anything you would be guessing, ask the person and pass their answer on.",
-	"A finished job whose summary asks something or leaves the task undone is not finished: continue it with message_job.",
-	"Also use message_job, not a new delegate, when the person wants a change to what a job just did.",
-	"When a job finishes, tell the person the outcome in a few sentences.",
-].join("\n");
+const app = loadAppConfig();
+const pluginsDisabled = process.env.CRUMBLE_DISABLE_PLUGINS === "1";
+const discordToken = process.env.DISCORD_TOKEN;
+const discordUsers = Object.fromEntries(app.tenants.filter((t) => t.discordUserId).map((t) => [t.id, t.discordUserId!]));
 
-// Crumble gets its own agent directory so the host's Pi extensions, skills and context files stay out of it.
-const agentDir = join(config.dataDir, "tenants", "default", "agent");
-const cwd = join(config.dataDir, "tenants", "default", "home");
-mkdirSync(agentDir, { recursive: true });
-mkdirSync(cwd, { recursive: true });
-mkdirSync(config.jobsDir, { recursive: true });
-mkdirSync(config.workspacesDir, { recursive: true });
-
-const store = new JobStore(join(config.dataDir, "crumble.db"));
-const supervisor = new Supervisor({
-	store,
-	runner: createRunner(),
-	askExtension: config.askExtension,
-	provider: config.provider,
-	model: config.model,
-	onSettled: (job) => notify(job),
-});
-
-const modelRuntime = await ModelRuntime.create();
-const model = modelRuntime.getModel(config.provider, config.model);
-if (!model) throw new Error(`Model ${config.provider}/${config.model} is not available`);
-
-const resourceLoader = new DefaultResourceLoader({
-	cwd,
-	agentDir,
-	systemPrompt: CRUMBLE_PROMPT,
-	extensionFactories: [delegateExtension(supervisor, store, config.workspacesDir)],
-});
-await resourceLoader.reload();
-
-const { session } = await createAgentSession({
-	cwd,
-	agentDir,
-	modelRuntime,
-	model,
-	resourceLoader,
-	noTools: "builtin",
-});
-
-session.subscribe((event) => {
-	if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-		process.stdout.write(event.assistantMessageEvent.delta);
-	} else if (event.type === "tool_execution_start") {
-		process.stdout.write(`\n[${event.toolName}]\n`);
-	} else if (event.type === "agent_settled") {
-		process.stdout.write("\n> ");
+mkdirSync(app.dataDir, { recursive: true, mode: 0o700 });
+const lockPath = join(app.dataDir, "service.lock");
+function acquireLock(): void {
+	try { writeFileSync(lockPath, String(process.pid), { flag: "wx", mode: 0o600 }); }
+	catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+		const pid = Number(readFileSync(lockPath, "utf8"));
+		if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error(`Invalid process lock at ${lockPath}; inspect it before removing it.`);
+		try { process.kill(pid, 0); }
+		catch (probe) {
+			if ((probe as NodeJS.ErrnoException).code !== "ESRCH") throw probe;
+			unlinkSync(lockPath);
+			writeFileSync(lockPath, String(process.pid), { flag: "wx", mode: 0o600 });
+			return;
+		}
+		throw new Error(`Crumble is already running for this data directory (PID ${pid}).`);
 	}
-});
+}
+acquireLock();
 
-function send(text: string): void {
-	session.prompt(text, { streamingBehavior: "followUp" }).catch((error: unknown) => {
-		console.error(error instanceof Error ? error.message : error);
+interface LiveTenant {
+	config: TenantConfig;
+	state: AssistantState;
+	child?: ChildProcess;
+	restartTimer?: NodeJS.Timeout;
+	restarts: number;
+	delivering?: Promise<void>;
+	retryDeliveryAt: number;
+	deliveryFailures: number;
+}
+
+const tenants = new Map<string, LiveTenant>();
+let discord: DiscordChannel | undefined;
+let stopping = false;
+let interval: NodeJS.Timeout | undefined;
+
+function signal(tenant: LiveTenant, message: ParentMessage): void {
+	if (tenant.child?.connected) tenant.child.send(message, () => {});
+}
+
+function startTenant(tenant: LiveTenant): void {
+	if (stopping) return;
+	const child = fork(join(import.meta.dirname, "tenant-process.ts"), [], {
+		cwd: tenant.config.homeDir, env: tenantEnvironment(tenant.config),
+		// Do not inherit Node --env-file flags that could reload the bot's secrets.
+		execArgv: [],
+		stdio: ["ignore", "ignore", "pipe", "ipc"],
+	});
+	tenant.child = child;
+	const startedAt = Date.now();
+	child.stderr?.on("data", (data: Buffer) => process.stderr.write(`[${tenant.config.id}] ${data.toString().slice(0, 2_000)}`));
+	child.on("message", (message: TenantMessage) => {
+		if (tenant.child !== child || stopping) return;
+		if (message.type === "activity") {
+			discord?.setTyping(tenant.config.id, message.active && message.source !== "terminal");
+		} else if (message.type === "ready") {
+			signal(tenant, { type: "wake" });
+			void deliver(tenant);
+		} else if (message.type === "changed") void deliver(tenant);
+		else if (message.type === "error") console.error(`[${tenant.config.id}] ${message.message}`);
+	});
+	child.on("error", (error) => console.error(`[${tenant.config.id}] Could not run assistant: ${error.message}`));
+	child.on("exit", () => {
+		if (tenant.child === child) {
+			tenant.child = undefined;
+			discord?.setTyping(tenant.config.id, false);
+		}
+		if (stopping) return;
+		tenant.restarts = Date.now() - startedAt > 60_000 ? 0 : tenant.restarts + 1;
+		const delay = Math.min(30_000, 1_000 * 2 ** Math.min(tenant.restarts, 5));
+		console.error(`[${tenant.config.id}] Assistant stopped; restarting in ${delay / 1_000}s. Pending requests are saved.`);
+		tenant.restartTimer = setTimeout(() => startTenant(tenant), delay);
+	});
+	signal(tenant, {
+		type: "init", tenant: tenant.config, pluginsDisabled,
+		app: { runnerKind: app.runnerKind, sandboxImage: app.sandboxImage, askExtension: app.askExtension },
 	});
 }
 
-function notify(job: Job): void {
-	process.stdout.write(`\n[job ${job.id} is ${job.status}]\n`);
-	send(
-		`Update from the worker supervisor, not from the person:\n${describeJob(job)}\n` +
-			`To answer or continue this job, call message_job with job_id ${job.id}.`,
-	);
+function enqueue(tenantId: string, id: string, text: string, source: InboundSource): void {
+	const tenant = tenants.get(tenantId);
+	if (!tenant || stopping) return;
+	if (!text.trim()) return;
+	const inserted = tenant.state.enqueue({ id, text, source });
+	if (inserted && /^\/(?:stop|plugin)(?:\s|$)/.test(text.trim())) signal(tenant, { type: "interrupt" });
+	signal(tenant, { type: "wake" });
 }
 
-const input = createInterface({ input: process.stdin });
-process.stdout.write("Crumble is ready.\n> ");
-input.on("line", (line) => {
-	if (line.trim().length > 0) send(line);
-});
-input.on("close", () => {
-	// Jobs keep the process alive until they settle.
-	session.waitForIdle().then(() => session.dispose());
-});
+function deliver(tenant: LiveTenant): Promise<void> {
+	if (tenant.delivering) return tenant.delivering;
+	if (stopping || Date.now() < tenant.retryDeliveryAt) return Promise.resolve();
+	tenant.delivering = (async () => {
+		for (const delivery of tenant.state.pendingDeliveries()) {
+			if (stopping) break;
+			const useDiscord = delivery.source === "discord" || (delivery.source === "internal" && !!tenant.config.discordUserId && !!discord);
+			if (!useDiscord || !discord) continue;
+			await discord.send(tenant.config.id, delivery.response);
+			tenant.state.acknowledgeDelivery(delivery.id);
+		}
+		tenant.deliveryFailures = 0;
+	})().catch(() => {
+		tenant.deliveryFailures += 1;
+		tenant.retryDeliveryAt = Date.now() + Math.min(60_000, 2_000 * 2 ** Math.min(tenant.deliveryFailures, 5));
+		console.error(`[${tenant.config.id}] Reply delivery failed; the saved reply will be retried.`);
+	}).finally(() => { tenant.delivering = undefined; });
+	return tenant.delivering;
+}
+
+async function stop(): Promise<void> {
+	if (stopping) return;
+	stopping = true;
+	if (interval) clearInterval(interval);
+	await discord?.close();
+	await Promise.all([...tenants.values()].map(async (tenant) => {
+		if (tenant.restartTimer) clearTimeout(tenant.restartTimer);
+		const child = tenant.child;
+		if (child && child.exitCode === null && child.signalCode === null) {
+			await new Promise<void>((resolve) => {
+				const timer = setTimeout(() => child.kill("SIGKILL"), 20_000);
+				child.once("exit", () => { clearTimeout(timer); resolve(); });
+				signal(tenant, { type: "stop" });
+			});
+		}
+		await tenant.delivering;
+		tenant.state.close();
+	}));
+	try { unlinkSync(lockPath); } catch { /* Already released. */ }
+}
+
+process.on("SIGINT", () => { void stop(); });
+process.on("SIGTERM", () => { void stop(); });
+
+try {
+	for (const config of app.tenants) {
+		prepareTenant(config);
+		tenants.set(config.id, { config, state: new AssistantState(config.stateDatabasePath), restarts: 0, retryDeliveryAt: 0, deliveryFailures: 0 });
+	}
+	if (discordToken && Object.keys(discordUsers).length) {
+		discord = createDiscordChannel({
+			token: discordToken, tenantUsers: discordUsers,
+			onMessage: (message) => enqueue(message.tenantId, `discord:${message.messageId}`, message.text, "discord"),
+			onError: () => console.error("Discord connection or incoming-message handling failed; see channel availability."),
+		});
+		await discord.start();
+		console.log("Discord private messages connected.");
+	}
+	for (const tenant of tenants.values()) startTenant(tenant);
+	interval = setInterval(() => {
+		for (const tenant of tenants.values()) {
+			try { tenant.state.enqueueDueSchedules(); }
+			catch { console.error(`[${tenant.config.id}] Schedule processing failed; schedules remain saved.`); }
+			signal(tenant, { type: "wake" });
+			void deliver(tenant);
+		}
+	}, 1_000);
+	console.log(`Crumble service ready for ${tenants.size} tenant${tenants.size === 1 ? "" : "s"}. Plugins ${pluginsDisabled ? "disabled (safe mode)" : "available"}.`);
+} catch (error) {
+	console.error(error instanceof Error ? error.message : error);
+	await stop();
+	process.exitCode = 1;
+}

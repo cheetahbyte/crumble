@@ -4,9 +4,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { config, createRunner } from "../src/config.ts";
+import { loadAppConfig, createRunner } from "../src/config.ts";
 import { type Job, JobStore } from "../src/jobs.ts";
 import { Supervisor } from "../src/supervisor.ts";
+import { prepareTenant } from "../src/tenants.ts";
 
 const PHRASE = "Bis bald und alles Gute";
 const BRIEF =
@@ -14,20 +15,23 @@ const BRIEF =
 	"The person has a preferred farewell phrase that is not written down anywhere. Ask for it before writing any code. " +
 	"In your final summary, include the output of `uname -s`.";
 
-const workspace = join(config.workspacesDir, "demo");
+const config = loadAppConfig();
+const tenant = config.tenants.find((item) => item.id === config.selectedTenantId)!;
+prepareTenant(tenant);
+const workspace = join(tenant.workspacesDir, "demo");
 assert.ok(!readFileSync(join(workspace, "greet.js"), "utf8").includes(PHRASE), "demo project is in its initial state");
 
 mkdirSync(config.jobsDir, { recursive: true });
-const store = new JobStore(join(config.dataDir, "crumble.db"));
+const store = new JobStore(tenant.jobsDatabasePath);
 
 let settle: ((job: Job) => void) | undefined;
 const nextSettled = () => new Promise<Job>((resolve) => (settle = resolve));
 const supervisor = new Supervisor({
 	store,
-	runner: createRunner(),
+	runner: createRunner(tenant, config),
 	askExtension: config.askExtension,
-	provider: config.provider,
-	model: config.model,
+	provider: tenant.provider,
+	model: tenant.model,
 	onSettled: (job) => settle?.(job),
 });
 

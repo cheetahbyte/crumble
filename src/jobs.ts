@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export type JobStatus = "running" | "waiting" | "done" | "failed";
+export type JobStatus = "running" | "waiting" | "done" | "failed" | "interrupted" | "cancelled";
 
 export interface Job {
 	id: string;
@@ -13,6 +13,11 @@ export interface Job {
 	error: string | null;
 	createdAt: number;
 	updatedAt: number;
+}
+
+export interface JobNotification {
+	job: Job;
+	version: number;
 }
 
 export type JobPatch = Partial<Pick<Job, "status" | "question" | "summary" | "error">>;
@@ -29,7 +34,14 @@ interface JobRow {
 	updated_at: number;
 }
 
-const STATUSES: readonly string[] = ["running", "waiting", "done", "failed"];
+interface NotificationRow {
+	job_id: string;
+	version: number;
+	job_json: string;
+}
+
+const STATUSES: readonly string[] = ["running", "waiting", "done", "failed", "interrupted", "cancelled"];
+const NOTIFY_STATUSES: readonly JobStatus[] = ["waiting", "done", "failed", "interrupted", "cancelled"];
 
 function toJob(row: JobRow): Job {
 	if (!STATUSES.includes(row.status)) throw new Error(`Job ${row.id} has unknown status ${row.status}`);
@@ -62,12 +74,19 @@ export class JobStore {
 				error TEXT,
 				created_at INTEGER NOT NULL,
 				updated_at INTEGER NOT NULL
-			)
+			);
+			CREATE TABLE IF NOT EXISTS job_notifications (
+				job_id TEXT NOT NULL,
+				version INTEGER NOT NULL,
+				job_json TEXT NOT NULL,
+				acknowledged_at INTEGER,
+				PRIMARY KEY (job_id, version)
+			);
 		`);
 	}
 
 	create(project: string, brief: string): Job {
-		const id = randomUUID().slice(0, 8);
+		const id = randomUUID();
 		const now = Date.now();
 		this.db
 			.prepare("INSERT INTO jobs (id, project, brief, status, created_at, updated_at) VALUES (?, ?, ?, 'running', ?, ?)")
@@ -93,11 +112,52 @@ export class JobStore {
 
 	update(id: string, patch: JobPatch): Job {
 		const current = this.require(id);
-		const next = { ...current, ...patch };
-		this.db
-			.prepare("UPDATE jobs SET status = ?, question = ?, summary = ?, error = ?, updated_at = ? WHERE id = ?")
-			.run(next.status, next.question, next.summary, next.error, Date.now(), id);
-		return this.require(id);
+		const now = Date.now();
+		const next = { ...current, ...patch, updatedAt: now };
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			this.db
+				.prepare("UPDATE jobs SET status = ?, question = ?, summary = ?, error = ?, updated_at = ? WHERE id = ?")
+				.run(next.status, next.question, next.summary, next.error, now, id);
+			if (NOTIFY_STATUSES.includes(next.status) && next.status !== current.status) {
+				const version = Number(
+					(this.db.prepare("SELECT COALESCE(MAX(version), 0) AS version FROM job_notifications WHERE job_id = ?").get(id) as { version: number }).version,
+				) + 1;
+				this.db
+					.prepare("INSERT INTO job_notifications (job_id, version, job_json) VALUES (?, ?, ?)")
+					.run(id, version, JSON.stringify(next));
+			}
+			this.db.exec("COMMIT");
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+		return next;
+	}
+
+	pendingNotifications(): JobNotification[] {
+		const rows = this.db
+			.prepare("SELECT job_id, version, job_json FROM job_notifications WHERE acknowledged_at IS NULL ORDER BY rowid")
+			.all() as unknown as NotificationRow[];
+		return rows.map((row) => ({ job: JSON.parse(row.job_json) as Job, version: row.version }));
+	}
+
+	acknowledgeNotification(jobId: string, version: number): boolean {
+		const result = this.db
+			.prepare("UPDATE job_notifications SET acknowledged_at = ? WHERE job_id = ? AND version = ? AND acknowledged_at IS NULL")
+			.run(Date.now(), jobId, version);
+		return Number(result.changes) > 0;
+	}
+
+	recoverInterrupted(): Job[] {
+		const running = this.db.prepare("SELECT * FROM jobs WHERE status = 'running'").all() as unknown as JobRow[];
+		return running.map((row) =>
+			this.update(row.id, {
+				status: "interrupted",
+				question: null,
+				error: "Worker was interrupted when the application stopped. Explicitly retry to continue this Pi session.",
+			}),
+		);
 	}
 
 	close(): void {

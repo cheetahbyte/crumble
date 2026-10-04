@@ -2,3 +2,7 @@ node_modules/
 data/
 workspaces/
 .DS_Store
+crumble.config.json
+.env
+.env.*
+!.env.example
