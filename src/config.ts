@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { hostRunner, type WorkerRunner, sandboxRunner } from "./runners.ts";
 import { createTenantConfig, type TenantConfig, validateTenants } from "./tenants.ts";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 const root = resolve(import.meta.dirname, "..");
 
@@ -21,7 +23,23 @@ export interface AppConfig {
 
 export type RuntimeConfig = Pick<AppConfig, "runnerKind" | "sandboxImage" | "askExtension">;
 
-interface RawAppConfig {
+const RawTenantSchema = Type.Object({
+	id: Type.String(),
+	discordUserId: Type.Optional(Type.String()),
+	provider: Type.Optional(Type.String()),
+	model: Type.Optional(Type.String()),
+	timezone: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+const RawAppConfigSchema = Type.Object({
+	dataDir: Type.Optional(Type.String()),
+	provider: Type.Optional(Type.String()),
+	model: Type.Optional(Type.String()),
+	sandboxImage: Type.Optional(Type.String()),
+	runner: Type.Optional(Type.Union([Type.Literal("sandbox"), Type.Literal("host")])),
+	tenants: Type.Optional(Type.Array(RawTenantSchema)),
+}, { additionalProperties: true });
+
+interface RawAppConfig extends Static<typeof RawAppConfigSchema> {
 	dataDir?: string;
 	provider?: string;
 	model?: string;
@@ -50,13 +68,17 @@ function parseConfig(path: string): RawAppConfig {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Crumble config not found: ${path}`);
 		throw new Error(`Could not parse Crumble config ${path}: ${(error as Error).message}`);
 	}
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Crumble config must be a JSON object");
-	const raw = value as Record<string, unknown>;
-	if (raw.tenants !== undefined && !Array.isArray(raw.tenants)) throw new Error("tenants must be an array");
-	const tenants = raw.tenants?.map((candidate, index) => {
-		if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) throw new Error(`tenants[${index}] must be an object`);
-		const tenant = candidate as Record<string, unknown>;
-		if (typeof tenant.id !== "string") throw new Error(`tenants[${index}].id must be a string`);
+	if (!Value.Check(RawAppConfigSchema, value)) {
+		const error = Value.Errors(RawAppConfigSchema, value)[0];
+		const path = String(error && "path" in error ? error.path : "").replace(/^\//, "").replaceAll("/", ".") || "config";
+		if (path === "config") throw new Error("Crumble config must be a JSON object");
+		if (path === "tenants") throw new Error("tenants must be an array");
+		if (/^tenants\.\d+$/.test(path)) throw new Error(`${path} must be an object`);
+		if (/^tenants\.\d+\.id$/.test(path)) throw new Error(`${path} must be a string`);
+		throw new Error(`${path} must have a valid configuration value`);
+	}
+	const raw = value;
+	const tenants = raw.tenants?.map((tenant, index) => {
 		return {
 			id: tenant.id,
 			discordUserId: nonEmptyString(tenant.discordUserId, `tenants[${index}].discordUserId`),
@@ -66,7 +88,6 @@ function parseConfig(path: string): RawAppConfig {
 		};
 	});
 	const runner = raw.runner;
-	if (runner !== undefined && runner !== "sandbox" && runner !== "host") throw new Error('runner must be "sandbox" or "host"');
 	return {
 		dataDir: nonEmptyString(raw.dataDir, "dataDir"),
 		provider: nonEmptyString(raw.provider, "provider"),

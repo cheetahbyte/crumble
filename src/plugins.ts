@@ -3,6 +3,8 @@ import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { dockerPluginExecutor, pluginDataPath, type PluginExecutor } from "./plugin-executor.ts";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TENANT_ID = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
@@ -36,6 +38,15 @@ interface Manifest {
 	instructions?: string;
 	entry: string;
 }
+
+const ManifestSchema = Type.Object({
+	name: Type.String(), description: Type.String(), instructions: Type.Optional(Type.String()), entry: Type.String(),
+}, { additionalProperties: true });
+const PluginRecordSchema = Type.Object({
+	name: Type.String(), description: Type.String(), instructions: Type.Optional(Type.String()), entry: Type.String(),
+	version: Type.String(), history: Type.Array(Type.String()), enabled: Type.Boolean(), lastError: Type.Optional(Type.String()),
+}, { additionalProperties: true });
+const RegistrySchema = Type.Object({ plugins: Type.Record(Type.String(), Type.Unknown()) }, { additionalProperties: true });
 
 interface PluginRecord extends Manifest {
 	version: string;
@@ -93,14 +104,22 @@ async function digestTree(path: string): Promise<string> {
 }
 
 function parseManifest(value: unknown): Manifest {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("plugin.json must be an object");
-	const raw = value as Record<string, unknown>;
-	if (typeof raw.name !== "string" || !SLUG.test(raw.name)) throw new Error("plugin name must be a lowercase slug");
-	if (typeof raw.description !== "string" || raw.description.trim() === "") throw new Error("plugin description must be non-empty");
-	if (typeof raw.entry !== "string" || raw.entry.trim() === "" || isAbsolute(raw.entry)) throw new Error("plugin entry must be a relative path");
+	if (!Value.Check(ManifestSchema, value)) {
+		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("plugin.json must be an object");
+		const first = Value.Errors(ManifestSchema, value)[0];
+		const path = String(first && "path" in first ? first.path : "");
+		if (path.endsWith("/name")) throw new Error("plugin name must be a lowercase slug");
+		if (path.endsWith("/description")) throw new Error("plugin description must be non-empty");
+		if (path.endsWith("/entry")) throw new Error("plugin entry must be a relative path");
+		if (path.endsWith("/instructions")) throw new Error("plugin instructions must be a string");
+		throw new Error("plugin.json must be an object");
+	}
+	const raw = value as Static<typeof ManifestSchema>;
+	if (!SLUG.test(raw.name)) throw new Error("plugin name must be a lowercase slug");
+	if (raw.description.trim() === "") throw new Error("plugin description must be non-empty");
+	if (raw.entry.trim() === "" || isAbsolute(raw.entry)) throw new Error("plugin entry must be a relative path");
 	const entry = raw.entry.replaceAll("\\", "/");
 	if (entry.split("/").some((part) => part === ".." || part === "")) throw new Error("plugin entry must stay inside the plugin directory");
-	if (raw.instructions !== undefined && typeof raw.instructions !== "string") throw new Error("plugin instructions must be a string");
 	return {
 		name: raw.name,
 		description: raw.description.trim(),
@@ -153,15 +172,15 @@ export class PluginManager {
 			await this.assertManagedPath(registryPath, { allowMissing: true, kind: "file" });
 			try {
 				const value: unknown = JSON.parse(await readFile(registryPath, "utf8"));
-				if (value && typeof value === "object" && !Array.isArray(value) && "plugins" in value && (value as RegistryData).plugins && typeof (value as RegistryData).plugins === "object") {
+				if (Value.Check(RegistrySchema, value)) {
 					this.registry.plugins = Object.fromEntries(Object.entries((value as RegistryData).plugins).filter(([name, record]) => {
 						try {
-							if (!SLUG.test(name) || !record || typeof record !== "object") throw new Error("invalid plugin record");
+							if (!SLUG.test(name) || !Value.Check(PluginRecordSchema, record)) throw new Error("invalid plugin record");
 							parseManifest(record);
-							if (record.name !== name) throw new Error("plugin record name does not match its key");
-							if (typeof record.version !== "string" || !VERSION.test(record.version)) throw new Error("invalid plugin version");
-							if (!Array.isArray(record.history) || !record.history.every((item) => typeof item === "string" && VERSION.test(item))) throw new Error("invalid plugin history");
-							if (typeof record.enabled !== "boolean" || (record.lastError !== undefined && typeof record.lastError !== "string")) throw new Error("invalid plugin record fields");
+							const typed = record as Static<typeof PluginRecordSchema>;
+							if (typed.name !== name) throw new Error("plugin record name does not match its key");
+							if (!VERSION.test(typed.version)) throw new Error("invalid plugin version");
+							if (!typed.history.every((item) => VERSION.test(item))) throw new Error("invalid plugin history");
 							return true;
 						} catch (error) {
 							this.malformedRecords.push({ name: SLUG.test(name) ? name : "_invalid", description: "Malformed plugin record", status: "error", error: shortError(error) });
