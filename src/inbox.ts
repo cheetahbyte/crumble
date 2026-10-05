@@ -7,6 +7,7 @@ export interface InboxOptions {
 	handle: (request: InboundRequest) => Promise<AssistantReply>;
 	changed: () => void;
 	activity?: (request: InboundRequest, active: boolean) => void;
+	afterComplete?: (request: InboundRequest, reply: string) => Promise<void>;
 	onError?: (error: unknown) => void;
 }
 
@@ -47,17 +48,24 @@ export class InboxProcessor {
 			if (!request) break;
 			if (!state.markProcessing(request.id)) continue;
 			this.activity(request, true);
+			let completedReply: string | undefined;
 			try {
 				const response = await handle(request);
 				const text = typeof response === "string" ? response : response.text;
+				completedReply = text;
 				state.complete(request.id, text.trim().slice(0, 1_000_000) || "The request finished without a text response.", typeof response === "string" ? true : response.notify);
 			} catch (error) {
+				completedReply = undefined;
 				const reason = error instanceof Error ? error.message : String(error);
 				state.fail(request.id, reason.slice(0, 8_000) || "The request failed.");
 			} finally {
 				this.activity(request, false);
 			}
 			changed();
+			if (completedReply !== undefined && !this.stopped) {
+				try { await this.options.afterComplete?.(request, completedReply); }
+				catch (error) { this.options.onError?.(error); }
+			}
 		}
 	}
 }

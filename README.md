@@ -109,7 +109,10 @@ The following commands work independently of the model in Discord:
 | `/routine pause\|resume\|run ID` | Pause, resume, or run a routine now. |
 | `/history QUERY` | Search earlier private conversations. |
 | `/skills` | List learned procedures. |
-| `/skill show\|disable\|enable\|rollback NAME` | Inspect or manage a learned procedure. |
+| `/skill show\|history\|delete\|disable\|enable\|rollback NAME` | Inspect or manage a learned procedure and its revisions. |
+| `/memories` | List saved preferences and facts. |
+| `/memory show\|history\|rollback\|forget KEY` | Inspect, undo, or remove a memory and its revisions. |
+| `/learning on\|off` | Enable or pause automatic post-reply learning for this tenant. |
 | `/stop` | Stop the current assistant turn. Worker jobs continue until cancelled separately. |
 
 The assistant can also manage jobs, memory, schedules, workspaces, and plugins through its tools. Schedules can run once, repeat at a fixed elapsed interval, or follow a timezone-aware cron expression. Routines can be paused, resumed, edited, or run on demand. Quiet monitors retain their last result and can suppress unchanged updates; failures are still reported. Quiet checks run browser or plugin tools directly, because background workers report independently. External webhook/event triggers are not included. Crumble does not include a built-in email provider.
@@ -118,7 +121,11 @@ The assistant can also manage jobs, memory, schedules, workspaces, and plugins t
 
 Ask about earlier conversations to search your private history. Crumble can retrieve dated excerpts and load the original exchange instead of guessing from the current context window. Preference memory stays separate from transcript search.
 
-Ask Crumble to save a successful workflow as a learned skill. Skills are reusable instructions, with descriptions loaded into the assistant's context and full procedures loaded when relevant. They can be edited, disabled, enabled, or rolled back. They do not execute host extensions or grant new access.
+After successful replies to direct user messages, Crumble runs a separate learning review. It can retain explicit stable preferences and improve procedures backed by tool results or user corrections. The review has no tools, accepts at most three changes, requires matching evidence, and has a 30-second model timeout. The original reply is already saved and ready for delivery; learning failures do not change it. This adds one model call per eligible reply and may delay processing the next queued request. Scheduled runs, internal worker notifications, failed requests, and slash commands do not trigger this review. Reviews are best effort and are not replayed after a restart.
+
+Use `/learning off` to pause these reviews; explicit memory and skill tools remain available. Memory revisions retain the reason for a change, and skill revisions retain the source request and reason. Identical saves do not create new revisions. Forgetting a memory removes its saved revisions, and deleting a skill removes all its versions; conversation history is separate and remains searchable.
+
+Ask Crumble to save a successful workflow as a learned skill. Skills are reusable instructions, with relevant descriptions selected by lexical search for the current request and loaded into the assistant's context and full procedures loaded when relevant. They can be edited, disabled, enabled, or rolled back. They do not execute host extensions or grant new access.
 
 The browser tool opens websites, reads page content, clicks controls, fills fields, presses keys, and takes screenshots for the assistant. Each tenant gets a private Docker browser with a persistent Chromium profile. Cookies and site state are private to that tenant. Login challenges and CAPTCHAs still need human intervention; there is no remote desktop takeover UI. Browser content is treated as untrusted data.
 
@@ -162,7 +169,13 @@ Discord delivery is retried until acknowledged locally. If the process fails bet
 
 If the process stops during an assistant request, Crumble records the request as interrupted and does not replay it. A job interrupted while its worker was running also requires an explicit retry. This avoids repeating side effects without your direction.
 
-Data from the earlier spike is not migrated automatically. Stop Crumble and back up the old data before moving anything. There is no migration command; move data manually only when you know which tenant owns it.
+Tenant databases migrate automatically when opened. Drizzle schemas in `src/db/assistant-schema.ts` and `src/db/jobs-schema.ts` define the tables, indexes, and constraints. Checked-in SQL migrations live under `drizzle/assistant/` and `drizzle/jobs/`. Existing tenant databases are adopted transactionally, preserving rows and applying the same constraints as new databases. An invalid legacy row causes adoption to roll back and startup to fail with the database error.
+
+To change a schema, edit its TypeScript definition, run `pnpm db:generate`, review the generated SQL, and commit the migration and snapshot together. Use `drizzle-kit generate --config=drizzle.assistant.config.ts --custom --name=CHANGE_NAME` for data backfills, SQLite FTS tables, and triggers. Test both fresh databases and upgrades. Keep applied migrations unchanged; add another migration for subsequent changes. `pnpm db:check` checks migration history consistency.
+
+The ORM and Kit are pinned to matching `1.0.0-rc.4` releases because the `node:sqlite` adapter is not in Drizzle's stable release yet. Database row types are inferred from the schemas; existing SQL queries continue to use the built-in driver.
+
+Data ownership from the earlier spike is not migrated automatically. Stop Crumble and back up the old data before moving it into a tenant directory. Move it manually only when you know which tenant owns it.
 
 ## Run checks
 
@@ -171,6 +184,7 @@ Run the unit tests and TypeScript check:
 ```sh
 pnpm test
 pnpm check
+pnpm db:check
 ```
 
 The tests use fake Discord clients and workers, plus real local process tests. They do not log in to Discord or contact a live model. A sandbox cancellation test uses Docker when the image is available and skips otherwise. `pnpm spike` runs a separate live model suspend-and-resume experiment in the selected tenant; create its throwaway workspace with `./scripts/make-test-project.sh` first.

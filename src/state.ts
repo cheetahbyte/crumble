@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+import type { InferSelectModel } from "drizzle-orm";
+import { openDatabase } from "./db/database.ts";
+import type { assistantInbox, assistantMemory, assistantMemoryHistory, assistantSchedules } from "./db/assistant-schema.ts";
 import { CronExpressionParser } from "cron-parser";
 
 export type InboundSource = "terminal" | "discord" | "internal";
@@ -9,6 +12,12 @@ export interface MemoryEntry {
 	key: string;
 	value: unknown;
 	updatedAt: number;
+}
+
+export interface MemoryRevision extends MemoryEntry {
+	revision: number;
+	reason: string;
+	operation: "save" | "rollback" | "import";
 }
 
 export interface InboundRequest {
@@ -75,40 +84,10 @@ export interface Schedule {
 	paused: boolean;
 }
 
-interface MemoryRow {
-	key: string;
-	value_json: string;
-	updated_at: number;
-}
-
-interface InboundRow {
-	id: string;
-	text: string;
-	source: string;
-	status: string;
-	response: string | null;
-	error: string | null;
-	created_at: number;
-	updated_at: number;
-	schedule_id: string | null;
-}
-
-interface ScheduleRow {
-	id: string;
-	label: string;
-	prompt: string;
-	due_at: number;
-	interval_ms: number | null;
-	source: string;
-	enabled: number;
-	created_at: number;
-	cron: string | null;
-	timezone: string;
-	notification_policy: string;
-	last_result: string | null;
-	last_notified_result: string | null;
-	paused: number;
-}
+type MemoryRow = Pick<InferSelectModel<typeof assistantMemory>, "key" | "value_json" | "updated_at">;
+type MemoryRevisionRow = InferSelectModel<typeof assistantMemoryHistory>;
+type InboundRow = InferSelectModel<typeof assistantInbox>;
+type ScheduleRow = InferSelectModel<typeof assistantSchedules>;
 
 const SOURCES: readonly string[] = ["terminal", "discord", "internal"];
 const STATUSES: readonly string[] = ["pending", "processing", "completed", "failed"];
@@ -204,68 +183,7 @@ export class AssistantState {
 	private readonly db: DatabaseSync;
 
 	constructor(path: string) {
-		this.db = new DatabaseSync(path);
-		this.db.exec(`
-			PRAGMA foreign_keys = ON;
-			PRAGMA busy_timeout = 5000;
-			PRAGMA journal_mode = WAL;
-			CREATE TABLE IF NOT EXISTS assistant_memory (
-				key TEXT PRIMARY KEY CHECK(length(key) BETWEEN 1 AND ${MAX_KEY_LENGTH}),
-				value_json TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
-			);
-			CREATE TABLE IF NOT EXISTS assistant_inbox (
-				id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 1 AND ${MAX_ID_LENGTH}),
-				text TEXT NOT NULL CHECK(length(text) BETWEEN 1 AND ${MAX_TEXT_LENGTH}),
-				source TEXT NOT NULL CHECK(source IN ('terminal', 'discord', 'internal')),
-				status TEXT NOT NULL CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
-				response TEXT,
-				error TEXT,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL,
-				schedule_id TEXT,
-				CHECK((status = 'completed' AND response IS NOT NULL AND error IS NULL) OR status != 'completed'),
-				CHECK((status = 'failed' AND response IS NOT NULL) OR status != 'failed')
-			);
-			CREATE INDEX IF NOT EXISTS assistant_inbox_pending ON assistant_inbox(status);
-			CREATE TABLE IF NOT EXISTS assistant_deliveries (
-				id TEXT PRIMARY KEY REFERENCES assistant_inbox(id) ON DELETE CASCADE,
-				acknowledged_at INTEGER
-			);
-			CREATE TABLE IF NOT EXISTS assistant_schedules (
-				id TEXT PRIMARY KEY CHECK(length(id) BETWEEN 1 AND ${MAX_ID_LENGTH}),
-				label TEXT NOT NULL CHECK(length(label) BETWEEN 1 AND 256),
-				prompt TEXT NOT NULL CHECK(length(prompt) BETWEEN 1 AND ${MAX_TEXT_LENGTH}),
-				due_at INTEGER NOT NULL,
-				interval_ms INTEGER CHECK(interval_ms IS NULL OR interval_ms >= ${MIN_INTERVAL_MS}),
-				source TEXT NOT NULL CHECK(source IN ('terminal', 'discord', 'internal')),
-				enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
-				created_at INTEGER NOT NULL,
-				cron TEXT,
-				timezone TEXT NOT NULL DEFAULT 'UTC',
-				notification_policy TEXT NOT NULL DEFAULT 'always' CHECK(notification_policy IN ('always', 'changes_only')),
-				last_result TEXT,
-				last_notified_result TEXT,
-				paused INTEGER NOT NULL DEFAULT 0 CHECK(paused IN (0, 1))
-			);
-			CREATE INDEX IF NOT EXISTS assistant_schedules_due ON assistant_schedules(enabled, due_at);
-		`);
-		this.migrateColumns();
-	}
-
-	private migrateColumns(): void {
-		const columns = (table: string) => new Set((this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((column) => column.name));
-		const inbox = columns("assistant_inbox");
-		if (!inbox.has("schedule_id")) this.db.exec("ALTER TABLE assistant_inbox ADD COLUMN schedule_id TEXT");
-		const schedules = columns("assistant_schedules");
-		const additions: Array<[string, string]> = [
-			["cron", "TEXT"], ["timezone", "TEXT NOT NULL DEFAULT 'UTC'"],
-			["notification_policy", "TEXT NOT NULL DEFAULT 'always'"], ["last_result", "TEXT"],
-			["last_notified_result", "TEXT"], ["paused", "INTEGER NOT NULL DEFAULT 0"],
-		];
-		for (const [name, declaration] of additions) if (!schedules.has(name)) {
-			this.db.exec(`ALTER TABLE assistant_schedules ADD COLUMN ${name} ${declaration}`);
-		}
+		this.db = openDatabase(path, "assistant");
 	}
 
 	getMemory(key: string): unknown | undefined {
@@ -279,8 +197,11 @@ export class AssistantState {
 		return rows.map((row) => ({ key: row.key, value: JSON.parse(row.value_json) as unknown, updatedAt: row.updated_at }));
 	}
 
-	setMemory(key: string, value: unknown): void {
+	setMemory(key: string, value: unknown, reason = "Updated memory"): void {
 		this.validateMemoryKey(key);
+		if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 2_000) {
+			throw new Error("Memory reason must be a non-empty string of at most 2000 characters");
+		}
 		let valueJson: string | undefined;
 		try {
 			valueJson = JSON.stringify(value);
@@ -290,15 +211,73 @@ export class AssistantState {
 		if (valueJson === undefined || valueJson.length > MAX_MEMORY_VALUE_LENGTH) {
 			throw new Error(`Memory value must serialize to at most ${MAX_MEMORY_VALUE_LENGTH} characters`);
 		}
-		this.db.prepare(`
-			INSERT INTO assistant_memory (key, value_json, updated_at) VALUES (?, ?, ?)
-			ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at
-		`).run(key, valueJson, Date.now());
+		const now = Date.now();
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			const current = this.db.prepare("SELECT value_json FROM assistant_memory WHERE key = ?").get(key) as { value_json: string } | undefined;
+			if (current?.value_json === valueJson) { this.db.exec("COMMIT"); return; }
+			const inserted = this.db.prepare(`INSERT INTO assistant_memory_history (key, value_json, reason, operation, created_at)
+				VALUES (?, ?, ?, 'save', ?)`).run(key, valueJson, reason, now);
+			this.db.prepare(`INSERT INTO assistant_memory (key, value_json, updated_at, current_revision) VALUES (?, ?, ?, ?)
+				ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at, current_revision = excluded.current_revision`)
+				.run(key, valueJson, now, Number(inserted.lastInsertRowid));
+			this.db.exec("COMMIT");
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
+	}
+
+	memoryHistory(key: string): MemoryRevision[] {
+		this.validateMemoryKey(key);
+		const rows = this.db.prepare("SELECT id, key, value_json, reason, operation, created_at FROM assistant_memory_history WHERE key = ? ORDER BY id DESC")
+			.all(key) as unknown as MemoryRevisionRow[];
+		return rows.map((row) => ({
+			revision: row.id,
+			key: row.key,
+			value: JSON.parse(row.value_json) as unknown,
+			reason: row.reason,
+			operation: row.operation,
+			updatedAt: row.created_at,
+		}));
+	}
+
+	/** Restore the save immediately before the currently selected save revision. */
+	rollbackMemory(key: string): boolean {
+		this.validateMemoryKey(key);
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			const current = this.db.prepare("SELECT value_json, current_revision FROM assistant_memory WHERE key = ?").get(key) as { value_json: string; current_revision: number | null } | undefined;
+			if (!current || current.current_revision === null) { this.db.exec("COMMIT"); return false; }
+			const prior = this.db.prepare(`SELECT id, value_json FROM assistant_memory_history
+				WHERE key = ? AND id < ? AND operation IN ('save', 'import') ORDER BY id DESC LIMIT 1`)
+				.get(key, current.current_revision) as { id: number; value_json: string } | undefined;
+			if (!prior || prior.value_json === current.value_json) { this.db.exec("COMMIT"); return false; }
+			const now = Date.now();
+			this.db.prepare(`INSERT INTO assistant_memory_history (key, value_json, reason, operation, created_at)
+				VALUES (?, ?, 'Rolled back to a previous revision', 'rollback', ?)`).run(key, prior.value_json, now);
+			this.db.prepare("UPDATE assistant_memory SET value_json = ?, updated_at = ?, current_revision = ? WHERE key = ?")
+				.run(prior.value_json, now, prior.id, key);
+			this.db.exec("COMMIT");
+			return true;
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
 	}
 
 	deleteMemory(key: string): boolean {
 		this.validateMemoryKey(key);
-		return Number(this.db.prepare("DELETE FROM assistant_memory WHERE key = ?").run(key).changes) > 0;
+		this.db.exec("BEGIN IMMEDIATE");
+		try {
+			this.db.prepare("DELETE FROM assistant_memory_history WHERE key = ?").run(key);
+			const deleted = Number(this.db.prepare("DELETE FROM assistant_memory WHERE key = ?").run(key).changes) > 0;
+			this.db.exec("COMMIT");
+			return deleted;
+		} catch (error) {
+			this.db.exec("ROLLBACK");
+			throw error;
+		}
 	}
 
 	/** Insert once by stable id. Returns false when that id was already accepted. */

@@ -57,3 +57,22 @@ test("presence failures do not fail durable assistant requests", async () => {
 	assert.equal(state.get("a")?.status, "completed");
 	await inbox.close(); state.close();
 });
+
+test("learning happens after durable delivery and cannot fail the reply", async () => {
+	const state = new AssistantState(":memory:");
+	state.enqueue({ id: "learn", text: "a preference", source: "discord" });
+	let delivered = false;
+	let presence = false;
+	const inbox = new InboxProcessor({ state, handle: async () => "saved", changed() { delivered = true; },
+		activity(_request, active) { presence = active; },
+		afterComplete: async () => {
+			assert.equal(delivered, true);
+			assert.equal(presence, false);
+			assert.equal(state.get("learn")?.status, "completed");
+			throw new Error("learning failed");
+		},
+	});
+	await inbox.wake();
+	assert.equal(state.get("learn")?.response, "saved");
+	await inbox.close(); state.close();
+});

@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { REFLECTION_PROMPT, reviewLearning } from "./reflection.ts";
 import type { BrowserManager } from "./browser.ts";
 import type { LearningStore } from "./learning.ts";
 import type { AssistantReply } from "./inbox.ts";
@@ -54,6 +55,9 @@ export class TenantAssistant {
 	private interrupted = false;
 	private closed = false;
 	private currentRequest?: InboundRequest;
+	private reviewer?: AgentSession;
+	private createReviewer?: () => Promise<AgentSession>;
+	private learningEvidence = "";
 	private routineOutcome?: { text: string; notify: boolean };
 
 	constructor(options: AssistantOptions) { this.options = options; }
@@ -61,6 +65,7 @@ export class TenantAssistant {
 	async handle(request: InboundRequest): Promise<AssistantReply> {
 		this.currentRequest = request;
 		this.routineOutcome = undefined;
+		this.learningEvidence = "";
 		try {
 			const text = await this.handleRequest(request);
 			return this.routineOutcome ?? text;
@@ -80,19 +85,23 @@ export class TenantAssistant {
 		if (this.interrupted || this.closed) throw new Error("Assistant turn stopped. Already performed actions were not undone.");
 		const timer = setTimeout(() => { void this.abort().catch(() => {}); }, this.options.turnTimeoutMs ?? 10 * 60_000);
 		try {
+			const messageStart = session.messages.length;
 			await session.prompt(request.text, { expandPromptTemplates: false });
 			if (this.interrupted) throw new Error("Assistant turn stopped or timed out. Already performed actions were not undone; check /jobs before retrying.");
 			const message = session.messages.at(-1);
 			if (message?.role === "assistant" && (message.stopReason === "error" || message.stopReason === "aborted")) {
 				throw new Error(message.errorMessage || "The model request failed. Check this tenant's model authentication.");
 			}
+			this.learningEvidence = session.messages.slice(messageStart)
+				.filter((message) => message.role === "toolResult" && !message.isError)
+				.map((message) => JSON.stringify(message)).join("\n").slice(0, 24_000);
 			return (session.getLastAssistantText() ?? "The request finished without a text response.").slice(0, 1_000_000);
 		} finally { clearTimeout(timer); }
 	}
 
 	async abort(): Promise<void> {
 		this.interrupted = true;
-		await this.session?.abort();
+		await Promise.all([this.session?.abort(), this.reviewer?.abort()]);
 	}
 
 	async close(): Promise<void> {
@@ -100,6 +109,28 @@ export class TenantAssistant {
 		await this.abort();
 		this.session?.dispose();
 		await this.options.browser.close();
+	}
+
+	/** Best-effort review runs after the reply is durable and ready for delivery. */
+	async learn(request: InboundRequest, reply: string): Promise<void> {
+		if (this.closed || this.interrupted || !this.createReviewer) return;
+		try {
+			await reviewLearning({ request, reply, evidence: this.learningEvidence,
+				state: this.options.state, learning: this.options.learning,
+				generate: async (input) => {
+					const reviewer = await this.createReviewer!();
+					this.reviewer = reviewer;
+					if (this.closed || this.interrupted) { reviewer.dispose(); this.reviewer = undefined; throw new Error("Learning stopped"); }
+					const timer = setTimeout(() => { void reviewer.abort().catch(() => {}); }, 30_000);
+					try {
+						await reviewer.prompt(input, { expandPromptTemplates: false });
+						const last = reviewer.messages.at(-1);
+						if (this.closed || this.interrupted || last?.role !== "assistant" || last.stopReason === "error" || last.stopReason === "aborted") throw new Error("Learning review did not finish");
+						return reviewer.getLastAssistantText() ?? "";
+					} finally { clearTimeout(timer); reviewer.dispose(); this.reviewer = undefined; }
+				},
+			});
+		} catch { console.warn("Learning review skipped; the completed reply is unaffected."); }
 	}
 
 	private async getSession(): Promise<AgentSession> {
@@ -122,6 +153,15 @@ export class TenantAssistant {
 		});
 		const model = modelRuntime.getModel(tenant.provider, tenant.model);
 		if (!model) throw new Error(`Model ${tenant.provider}/${tenant.model} is unavailable. Update this tenant's model configuration.`);
+		this.createReviewer = async () => {
+			const settings = SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
+			const loader = new DefaultResourceLoader({ cwd: tenant.homeDir, agentDir: tenant.agentDir, settingsManager: settings,
+				noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true, systemPrompt: REFLECTION_PROMPT });
+			await loader.reload();
+			return (await createAgentSession({ cwd: tenant.homeDir, agentDir: tenant.agentDir, modelRuntime, model,
+				settingsManager: settings, resourceLoader: loader, noTools: "all", thinkingLevel: "low",
+				sessionManager: SessionManager.inMemory(tenant.homeDir) })).session;
+		};
 		const settingsManager = SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 2 } });
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: tenant.homeDir, agentDir: tenant.agentDir, settingsManager,
@@ -131,7 +171,7 @@ export class TenantAssistant {
 				delegateExtension(supervisor, jobs, tenant.workspacesDir, () => memoryContext(state),
 					() => !this.currentRequest?.scheduleId || state.getSchedule(this.currentRequest.scheduleId)?.notificationPolicy !== "changes_only"),
 				assistantExtension({ tenant, state, plugins, currentSource: () => this.source }),
-				learningExtension(learning),
+				learningExtension(learning, { currentRequest: () => this.currentRequest }),
 				browserExtension(browser),
 				routineExtension({ state, timezone: tenant.timezone, currentRequest: () => this.currentRequest,
 					setOutcome: (outcome) => { this.routineOutcome = outcome; } }),
@@ -154,7 +194,8 @@ export class TenantAssistant {
 			case "/help": return [
 				"Ask me to do something, research a topic, build a capability, remember a preference, or schedule a task.",
 				"/jobs · /cancel <job-id> · /plugins · /plugin disable|enable|rollback <name> · /schedules · /stop",
-				"/history <query> · /skills · /skill show|disable|enable|rollback <name> · /routine pause|resume|run <id>",
+				"/learning on|off · /memories · /memory show|history|rollback|forget <key>",
+				"/history <query> · /skills · /skill show|history|delete|disable|enable|rollback <name> · /routine pause|resume|run <id>",
 				"These commands work even when the model is unavailable. /stop stops the assistant turn; /cancel stops a worker.",
 			].join("\n");
 			case "/jobs": return jobs.list().map(describeJob).join("\n\n") || "No jobs yet.";
@@ -166,6 +207,19 @@ export class TenantAssistant {
 			case "/plugin":
 				if (!name || !["disable", "enable", "rollback"].includes(argument ?? "")) return "Usage: /plugin disable|enable|rollback <name>";
 				return JSON.stringify(await plugins[argument as "disable" | "enable" | "rollback"](name), null, 2);
+			case "/learning":
+				if (argument === "on" || argument === "off") learning.setLearningEnabled(argument === "on");
+				return `Automatic learning is ${learning.learningEnabled() ? "on" : "off"}. Usage: /learning on|off`;
+			case "/memories": return JSON.stringify(state.listMemory(), null, 2);
+			case "/memory": {
+				const key = text.trim().split(/\s+/).slice(2).join(" ");
+				if (!key) return "Usage: /memory show|history|rollback|forget <key>";
+				if (argument === "show") return JSON.stringify(state.getMemory(key) ?? "No such memory.", null, 2);
+				if (argument === "history") return JSON.stringify(state.memoryHistory(key), null, 2);
+				if (argument === "rollback") return state.rollbackMemory(key) ? "Memory rolled back." : "No earlier memory version.";
+				if (argument === "forget") return state.deleteMemory(key) ? "Forgotten." : "No such memory.";
+				return "Usage: /memory show|history|rollback|forget <key>";
+			}
 			case "/history": {
 				const query = text.trim().slice(command.length).trim();
 				return query ? JSON.stringify(learning.searchHistory(query), null, 2) : "Usage: /history <query>";
@@ -173,7 +227,9 @@ export class TenantAssistant {
 			case "/skills": return JSON.stringify(learning.listSkills(), null, 2);
 			case "/skill": {
 				const skillName = text.trim().split(/\s+/).slice(2).join(" ");
-				if (!skillName || !["show", "disable", "enable", "rollback"].includes(argument ?? "")) return "Usage: /skill show|disable|enable|rollback <name>";
+				if (!skillName || !["show", "history", "delete", "disable", "enable", "rollback"].includes(argument ?? "")) return "Usage: /skill show|history|delete|disable|enable|rollback <name>";
+				if (argument === "history") return JSON.stringify(learning.skillHistory(skillName), null, 2);
+				if (argument === "delete") return learning.deleteSkill(skillName) ? "Skill deleted." : "No such skill.";
 				if (argument === "show") return JSON.stringify(learning.readSkill(skillName) ?? "No such skill.", null, 2);
 				if (argument === "rollback") return JSON.stringify(learning.rollbackSkill(skillName) ?? "No earlier version available.", null, 2);
 				if (argument === "disable") return learning.disableSkill(skillName) ? `Disabled ${skillName}.` : "No enabled skill with that name.";

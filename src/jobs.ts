@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
+import type { InferSelectModel } from "drizzle-orm";
+import { openDatabase } from "./db/database.ts";
+import type { jobNotifications, jobs } from "./db/jobs-schema.ts";
 
 export type JobStatus = "running" | "waiting" | "done" | "failed" | "interrupted" | "cancelled";
 
@@ -22,23 +25,8 @@ export interface JobNotification {
 
 export type JobPatch = Partial<Pick<Job, "status" | "question" | "summary" | "error">>;
 
-interface JobRow {
-	id: string;
-	project: string;
-	brief: string;
-	status: string;
-	question: string | null;
-	summary: string | null;
-	error: string | null;
-	created_at: number;
-	updated_at: number;
-}
-
-interface NotificationRow {
-	job_id: string;
-	version: number;
-	job_json: string;
-}
+type JobRow = InferSelectModel<typeof jobs>;
+type NotificationRow = Pick<InferSelectModel<typeof jobNotifications>, "job_id" | "version" | "job_json">;
 
 const STATUSES: readonly string[] = ["running", "waiting", "done", "failed", "interrupted", "cancelled"];
 const NOTIFY_STATUSES: readonly JobStatus[] = ["waiting", "done", "failed", "interrupted", "cancelled"];
@@ -62,27 +50,7 @@ export class JobStore {
 	private db: DatabaseSync;
 
 	constructor(path: string) {
-		this.db = new DatabaseSync(path);
-		this.db.exec(`
-			CREATE TABLE IF NOT EXISTS jobs (
-				id TEXT PRIMARY KEY,
-				project TEXT NOT NULL,
-				brief TEXT NOT NULL,
-				status TEXT NOT NULL,
-				question TEXT,
-				summary TEXT,
-				error TEXT,
-				created_at INTEGER NOT NULL,
-				updated_at INTEGER NOT NULL
-			);
-			CREATE TABLE IF NOT EXISTS job_notifications (
-				job_id TEXT NOT NULL,
-				version INTEGER NOT NULL,
-				job_json TEXT NOT NULL,
-				acknowledged_at INTEGER,
-				PRIMARY KEY (job_id, version)
-			);
-		`);
+		this.db = openDatabase(path, "jobs");
 	}
 
 	create(project: string, brief: string): Job {

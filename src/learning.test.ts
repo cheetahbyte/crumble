@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LearningStore } from "./learning.ts";
+import { learningExtension } from "./extensions/learning.ts";
 import { AssistantState, type InboundSource } from "./state.ts";
 
 function withTenant(run: (state: AssistantState, store: LearningStore, directory: string) => void): void {
@@ -144,4 +145,100 @@ test("skill revisions can roll back without re-enabling a disabled skill", () =>
 		assert.equal(store.rollbackSkill("release", 9), undefined);
 		assert.throws(() => store.saveSkill("oversize", "desc", "x".repeat(12_001)), /instructions/);
 	});
+});
+
+test("skill versions retain provenance and identical content does not create a revision", () => {
+	withTenant((_state, store) => {
+		const first = store.saveSkill("release", "Prepare a release", "Check tags and artifacts.", {
+			sourceRequestId: "terminal:request-42",
+			reason: "The verified release needed an artifact check.",
+		});
+		assert.equal(first.version, 1);
+		assert.equal(first.sourceRequestId, "terminal:request-42");
+		assert.equal(first.reason, "The verified release needed an artifact check.");
+		const unchanged = store.saveSkill("release", "Prepare a release", "Check tags and artifacts.", {
+			sourceRequestId: "terminal:later-request",
+			reason: "A later save with the same procedure.",
+		});
+		assert.equal(unchanged.version, 1);
+		assert.equal(unchanged.sourceRequestId, "terminal:request-42");
+		const revised = store.saveSkill("release", "Prepare a release", "Check tags, artifacts, and deployment status.", {
+			sourceRequestId: "terminal:request-43",
+			reason: "Added a verified deployment status check.",
+		});
+		assert.equal(revised.version, 2);
+		assert.deepEqual(store.skillHistory("release"), [
+			{
+				version: 2,
+				createdAt: revised.updatedAt,
+				sourceRequestId: "terminal:request-43",
+				reason: "Added a verified deployment status check.",
+			},
+			{
+				version: 1,
+				createdAt: first.updatedAt,
+				sourceRequestId: "terminal:request-42",
+				reason: "The verified release needed an artifact check.",
+			},
+		]);
+	});
+});
+
+test("skill search ranks relevant enabled skills and never returns disabled skills", () => {
+	withTenant((_state, store) => {
+		store.saveSkill("gardening", "Plan a small herb garden", "Group basil and thyme by sunlight and water needs.");
+		store.saveSkill("release", "Prepare a software release", "Check release tags and deployment artifacts.");
+		store.saveSkill("private release notes", "Write internal release notes", "Summarize release changes.");
+		store.disableSkill("private release notes");
+		const results = store.searchSkills("release deployment tags", 2);
+		assert.deepEqual(results.map(({ name }) => name), ["release"]);
+		assert.ok(results.every(({ enabled }) => enabled));
+		assert.equal("instructions" in (results[0] ?? {}), false);
+		assert.deepEqual(store.searchSkills("no matching terms"), []);
+		assert.throws(() => store.searchSkills("release", 26), /limit/);
+	});
+});
+
+test("deleting a skill removes every version and learning preference persists", () => {
+	withTenant((_state, store) => {
+		assert.equal(store.learningEnabled(), true);
+		store.setLearningEnabled(false);
+		assert.equal(store.learningEnabled(), false);
+		store.saveSkill("cleanup", "Clean temporary files", "Remove generated artifacts.");
+		store.saveSkill("cleanup", "Clean temporary files", "Remove generated artifacts and caches.");
+		assert.equal(store.deleteSkill("cleanup"), true);
+		assert.equal(store.readSkill("cleanup"), undefined);
+		assert.deepEqual(store.skillHistory("cleanup"), []);
+		assert.equal(store.rollbackSkill("cleanup"), undefined);
+		assert.equal(store.deleteSkill("cleanup"), false);
+		assert.equal(store.isSkillDeleted("cleanup"), true);
+		store.saveSkill("cleanup", "Clean temporary files", "Remove generated artifacts.");
+		assert.equal(store.isSkillDeleted("cleanup"), false, "an explicit save clears the deletion marker");
+		store.setLearningEnabled(true);
+		assert.equal(store.learningEnabled(), true);
+	});
+});
+
+test("learning extension bounds long request text before skill retrieval", async () => {
+	let prompt: Promise<{ systemPrompt: string }> | undefined;
+	withTenant((_state, store) => {
+		store.saveSkill("release", "Prepare a software release", "Check release tags and deployment artifacts.");
+		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string }>) | undefined;
+		const extension = learningExtension(store, {
+			currentRequest: () => ({
+				id: "terminal:long-request",
+				source: "terminal",
+				text: `Help with a software release. ${"context ".repeat(200)}`,
+			}),
+		});
+		extension({
+			on: (_event: string, handler: unknown) => { beforeAgentStart = handler as typeof beforeAgentStart; },
+			registerTool: () => undefined,
+		} as never);
+		assert.ok(beforeAgentStart);
+		prompt = beforeAgentStart({ systemPrompt: "base prompt" });
+	});
+	assert.ok(prompt);
+	const { systemPrompt } = await prompt;
+	assert.match(systemPrompt, /"name":"release"/);
 });

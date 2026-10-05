@@ -25,6 +25,14 @@ test("learned skill controls stay usable without a model, including missing revi
 	};
 	try {
 		assert.equal(await command("/skill rollback absent"), '"No earlier version available."');
+		state.setMemory("style", "brief");
+		state.setMemory("style", "detailed");
+		assert.equal(await command("/memory rollback style"), "Memory rolled back.");
+		assert.equal(await command("/memory show style"), '"brief"');
+		assert.equal(await command("/memory forget style"), "Forgotten.");
+		assert.match(String(await command("/learning off")), /is off/);
+		assert.equal(learning.learningEnabled(), false);
+		assert.match(String(await command("/learning on")), /is on/);
 		learning.saveSkill("release checklist", "Release", "Check the release.");
 		assert.equal(await command("/skill disable release checklist"), "Disabled release checklist.");
 		assert.match(String(await command("/skill show release checklist")), /Check the release/);
