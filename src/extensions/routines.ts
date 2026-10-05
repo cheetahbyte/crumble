@@ -19,14 +19,12 @@ export function routineExtension(options: {
 			const schedule = request?.scheduleId ? state.getSchedule(request.scheduleId) : undefined;
 			if (!schedule) return;
 			const prior = schedule.lastResult === null ? "No prior result is available." : schedule.lastResult.slice(0, 8_000);
-			return {
-				systemPrompt: `${event.systemPrompt}\n\n` +
-					`Scheduled routine: ${schedule.label}\nRoutine prompt: ${schedule.prompt.slice(0, 8_000)}\n` +
-					`Prior run result: ${prior}\n` +
-					"Perform the authorized routine check now, using the prior result to identify meaningful changes. Complete the check before replying. " +
-					"For changes_only routines, use report_routine_result to return the concise current result and indicate whether it contains a meaningful change; unchanged checks should stay quiet. " +
-					"A separately emitted worker update cannot be silenced by this routine outcome, so prefer completing checks directly when possible.",
-			};
+			event.systemPromptOptions.sections.routine =
+				`Scheduled routine: ${schedule.label}\nRoutine prompt: ${schedule.prompt.slice(0, 8_000)}\n` +
+				`Prior run result: ${prior}\n` +
+				"Perform the authorized routine check now, using the prior result to identify meaningful changes. Complete the check before replying. " +
+				"For changes_only routines, use report_routine_result to return the concise current result and indicate whether it contains a meaningful change; unchanged checks should stay quiet. " +
+				"A separately emitted worker update cannot be silenced by this routine outcome, so prefer completing checks directly when possible.";
 		});
 
 		pi.registerTool({

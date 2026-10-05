@@ -94,11 +94,10 @@ Send a request in a Discord direct message. Crumble handles ordinary conversatio
 
 Workers run in the background. Crumble tells you when a worker finishes, fails, or needs a decision. A worker that asks a question waits for your answer. You can continue or retry interrupted work explicitly; Crumble does not replay interrupted requests automatically.
 
-The following commands work independently of the model in Discord:
+Ask in plain language to list, cancel, pause, forget, or roll back things. Crumble does not advertise commands in chat. For recovery when the model is unavailable or a turn hangs, these hidden commands bypass the model:
 
 | Command | Action |
 | --- | --- |
-| `/help` | Show available commands. |
 | `/jobs` | List delegated jobs and their states. |
 | `/cancel JOB_ID` | Request cancellation of a worker job. Replace `JOB_ID` with the job ID. |
 | `/plugins` | List installed capabilities and their states. |
@@ -112,8 +111,8 @@ The following commands work independently of the model in Discord:
 | `/skill show\|history\|delete\|disable\|enable\|rollback NAME` | Inspect or manage a learned procedure and its revisions. |
 | `/memories` | List saved preferences and facts. |
 | `/memory show\|history\|rollback\|forget KEY` | Inspect, undo, or remove a memory and its revisions. |
-| `/learning on\|off` | Enable or pause automatic post-reply learning for this tenant. |
-| `/stop` | Stop the current assistant turn. Worker jobs continue until cancelled separately. |
+| `/learning on\|off` | Turn automatic learning on or off for this tenant. |
+| `/stop` or `stop` | Stop the current assistant turn. Worker jobs continue until cancelled separately. |
 
 The assistant can also manage jobs, memory, schedules, workspaces, and plugins through its tools. Schedules can run once, repeat at a fixed elapsed interval, or follow a timezone-aware cron expression. Routines can be paused, resumed, edited, or run on demand. Quiet monitors retain their last result and can suppress unchanged updates; failures are still reported. Quiet checks run browser or plugin tools directly, because background workers report independently. External webhook/event triggers are not included. Crumble does not include a built-in email provider.
 
@@ -121,9 +120,9 @@ The assistant can also manage jobs, memory, schedules, workspaces, and plugins t
 
 Ask about earlier conversations to search your private history. Crumble can retrieve dated excerpts and load the original exchange instead of guessing from the current context window. Preference memory stays separate from transcript search.
 
-After successful replies to direct user messages, Crumble runs a separate learning review. It can retain explicit stable preferences and improve procedures backed by tool results or user corrections. The review has no tools, accepts at most three changes, requires matching evidence, and has a 30-second model timeout. The original reply is already saved and ready for delivery; learning failures do not change it. This adds one model call per eligible reply and may delay processing the next queued request. Scheduled runs, internal worker notifications, failed requests, and slash commands do not trigger this review. Reviews are best effort and are not replayed after a restart.
+Crumble learns while it replies, with the full conversation in view. When you state a stable preference, correct how it did something, or a task succeeds with an approach worth reusing, it saves a memory or a learned procedure and ends its reply with a short line such as "Noted: you prefer short replies." There is no separate review step or extra model call. Scheduled runs and internal worker notifications do not save anything on their own.
 
-Use `/learning off` to pause these reviews; explicit memory and skill tools remain available. Memory revisions retain the reason for a change, and skill revisions retain the source request and reason. Identical saves do not create new revisions. Forgetting a memory removes its saved revisions, and deleting a skill removes all its versions; conversation history is separate and remains searchable.
+Ask Crumble to stop learning, or use `/learning off`; it then saves memories and procedures only when you ask. Memory revisions retain the reason for a change, and skill revisions retain the source request and reason. Identical saves do not create new revisions. Forgetting a memory removes its saved revisions, and deleting a skill removes all its versions; conversation history is separate and remains searchable.
 
 Ask Crumble to save a successful workflow as a learned skill. Skills are reusable instructions, with relevant descriptions selected by lexical search for the current request and loaded into the assistant's context and full procedures loaded when relevant. They can be edited, disabled, enabled, or rolled back. They do not execute host extensions or grant new access.
 

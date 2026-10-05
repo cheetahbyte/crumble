@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createDiscordChannel, type DiscordChannel } from "./channels/discord.ts";
 import { loadAppConfig } from "./config.ts";
-import type { ParentMessage, TenantMessage } from "./protocol.ts";
+import { isStopRequest, type ParentMessage, type TenantMessage } from "./protocol.ts";
 import { AssistantState, type InboundSource } from "./state.ts";
 import { prepareTenant, tenantEnvironment, type TenantConfig } from "./tenants.ts";
 
@@ -96,7 +96,7 @@ function enqueue(tenantId: string, id: string, text: string, source: InboundSour
 	if (!tenant || stopping) return;
 	if (!text.trim()) return;
 	const inserted = tenant.state.enqueue({ id, text, source });
-	if (inserted && /^\/(?:stop|plugin)(?:\s|$)/.test(text.trim())) signal(tenant, { type: "interrupt" });
+	if (inserted && (isStopRequest(text) || /^\/plugin(?:\s|$)/.test(text.trim()))) signal(tenant, { type: "interrupt" });
 	signal(tenant, { type: "wake" });
 }
 

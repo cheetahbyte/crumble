@@ -108,10 +108,10 @@ test("headless service persists tenant outboxes, enforces singleton, and release
 	mkdirSync(dirname(alicePath), { recursive: true });
 	mkdirSync(dirname(bobPath), { recursive: true });
 	const aliceSeed = new AssistantState(alicePath);
-	aliceSeed.enqueue({ id: "internal:alice-help", text: "/help", source: "internal" });
+	aliceSeed.enqueue({ id: "internal:alice-help", text: "/jobs", source: "internal" });
 	aliceSeed.close();
 	const bobSeed = new AssistantState(bobPath);
-	bobSeed.enqueue({ id: "internal:bob-help", text: "/help", source: "internal" });
+	bobSeed.enqueue({ id: "internal:bob-help", text: "/jobs", source: "internal" });
 	bobSeed.close();
 	const alice = new AssistantState(alicePath);
 	const bob = new AssistantState(bobPath);
@@ -120,9 +120,9 @@ test("headless service persists tenant outboxes, enforces singleton, and release
 		crumble = startCrumble(configPath);
 		await crumble.waitFor("Crumble service ready for 2 tenants");
 		await waitUntil(() => alice.get("internal:alice-help")?.status === "completed" && bob.get("internal:bob-help")?.status === "completed");
-		assert.match(alice.pendingDeliveries()[0]?.response ?? "", /Ask me to do something/);
-		assert.match(bob.pendingDeliveries()[0]?.response ?? "", /Ask me to do something/);
-		assert.doesNotMatch(crumble.output(), /Ask me to do something/);
+		assert.match(alice.pendingDeliveries()[0]?.response ?? "", /No jobs yet/);
+		assert.match(bob.pendingDeliveries()[0]?.response ?? "", /No jobs yet/);
+		assert.doesNotMatch(crumble.output(), /No jobs yet/);
 		assert.equal(existsSync(join(dataDir, "service.lock")), true);
 
 		const contender = startCrumble(configPath);

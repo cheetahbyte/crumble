@@ -85,7 +85,6 @@ process.on("message", (message: ParentMessage) => {
 		});
 		inbox = new InboxProcessor({
 			state, handle: (request) => assistant!.handle(request),
-			afterComplete: (request, reply) => assistant!.learn(request, reply),
 			activity: (request, active) => {
 				const quiet = request.scheduleId && state!.getSchedule(request.scheduleId)?.notificationPolicy === "changes_only";
 				send({ type: "activity", active: active && !quiet, source: request.source });

@@ -220,10 +220,12 @@ test("deleting a skill removes every version and learning preference persists", 
 });
 
 test("learning extension bounds long request text before skill retrieval", async () => {
-	let prompt: Promise<{ systemPrompt: string }> | undefined;
+	type Event = { systemPromptOptions: { sections: Record<string, string> } };
+	const event: Event = { systemPromptOptions: { sections: {} } };
+	let prompt: Promise<void> | undefined;
 	withTenant((_state, store) => {
 		store.saveSkill("release", "Prepare a software release", "Check release tags and deployment artifacts.");
-		let beforeAgentStart: ((event: { systemPrompt: string }) => Promise<{ systemPrompt: string }>) | undefined;
+		let beforeAgentStart: ((event: Event) => Promise<void>) | undefined;
 		const extension = learningExtension(store, {
 			currentRequest: () => ({
 				id: "terminal:long-request",
@@ -236,9 +238,9 @@ test("learning extension bounds long request text before skill retrieval", async
 			registerTool: () => undefined,
 		} as never);
 		assert.ok(beforeAgentStart);
-		prompt = beforeAgentStart({ systemPrompt: "base prompt" });
+		prompt = beforeAgentStart(event);
 	});
 	assert.ok(prompt);
-	const { systemPrompt } = await prompt;
-	assert.match(systemPrompt, /"name":"release"/);
+	await prompt;
+	assert.match(event.systemPromptOptions.sections.learning ?? "", /"name":"release"/);
 });
