@@ -38,7 +38,7 @@ function docker(args: string[], input?: string, signal?: AbortSignal, timeoutMs 
 		encoding: "buffer",
 		stripFinalNewline: false,
 		buffer: { stdout: true, stderr: false },
-		maxBuffer: { stdout: MAX_RESPONSE_BYTES, stderr: 100_000_000 },
+		maxBuffer: { stdout: MAX_RESPONSE_BYTES },
 		cancelSignal: signal,
 		timeout: timeoutMs,
 		forceKillAfterDelay: 1_000,
@@ -51,7 +51,7 @@ function docker(args: string[], input?: string, signal?: AbortSignal, timeoutMs 
 		}
 	});
 	return command.then(({ stdout }) => Buffer.from(stdout as Uint8Array)).catch((error: unknown) => {
-		const result = error as { isCanceled?: boolean; timedOut?: boolean; isMaxBuffer?: boolean; stderr?: Uint8Array; message?: string };
+		const result = error as { isCanceled?: boolean; timedOut?: boolean; isMaxBuffer?: boolean; message?: string };
 		if (result.isCanceled) throw new Error("aborted");
 		if (result.timedOut) throw new Error("browser docker command timed out");
 		if (result.isMaxBuffer) throw new Error("browser response exceeded the output limit");

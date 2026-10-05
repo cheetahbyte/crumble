@@ -3,6 +3,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { dockerPluginExecutor } from "./plugin-executor.ts";
 
 async function fakeDocker(source: string): Promise<{ base: string; restore: () => void }> {
@@ -18,12 +19,12 @@ async function fakeDocker(source: string): Promise<{ base: string; restore: () =
 }
 
 test("plugin executor preserves raw stdout and does not inherit host secrets", async () => {
-	const fake = await fakeDocker("if (process.argv[2] === 'run') { process.stdout.write(process.env.CRUMBLE_TEST_SECRET ?? 'missing-secret'); }");
+	const fake = await fakeDocker("if (process.argv[2] === 'run') { process.stdout.write((process.env.CRUMBLE_TEST_SECRET ?? 'missing-secret') + '\\n\\n'); }");
 	const previousSecret = process.env.CRUMBLE_TEST_SECRET;
 	process.env.CRUMBLE_TEST_SECRET = "host-secret";
 	try {
 		const result = await dockerPluginExecutor({ snapshotDir: "/snapshot", entry: "main.mjs", dataDir: "/data", image: "image", input: {} });
-		assert.equal(result, "missing-secret");
+		assert.equal(result, "missing-secret\n\n");
 	} finally {
 		if (previousSecret === undefined) delete process.env.CRUMBLE_TEST_SECRET;
 		else process.env.CRUMBLE_TEST_SECRET = previousSecret;
@@ -32,8 +33,8 @@ test("plugin executor preserves raw stdout and does not inherit host secrets", a
 	}
 });
 
-test("plugin executor reports bounded output failures", async () => {
-	const fake = await fakeDocker("if (process.argv[2] === 'run') process.stdout.write('x'.repeat(1024 * 1024 + 1));");
+test("plugin executor limits UTF-8 output by bytes", async () => {
+	const fake = await fakeDocker("if (process.argv[2] === 'run') process.stdout.write('😀'.repeat(262_145));");
 	try {
 		await assert.rejects(
 			dockerPluginExecutor({ snapshotDir: "/snapshot", entry: "main.mjs", dataDir: "/data", image: "image", input: {} }),
@@ -61,19 +62,24 @@ test("plugin executor retains nonzero Docker diagnostics", async () => {
 test("aborting a running plugin removes the container even when cleanup hangs", { timeout: 10_000 }, async () => {
 	const base = await mkdtemp(join(tmpdir(), "crumble-execa-docker-cleanup-"));
 	const marker = join(base, "cleanup-started");
+	const started = join(base, "run-started");
 	const fake = await fakeDocker(`const fs = require("node:fs");
-if (process.argv[2] === "run") { setInterval(() => {}, 1000); }
+if (process.argv[2] === "run") { fs.writeFileSync(${JSON.stringify(started)}, "started"); setInterval(() => {}, 1000); }
 if (process.argv[2] === "rm") { fs.writeFileSync(${JSON.stringify(marker)}, process.env.CRUMBLE_TEST_SECRET ?? "missing-secret"); setInterval(() => {}, 1000); }`);
 	const previousSecret = process.env.CRUMBLE_TEST_SECRET;
 	process.env.CRUMBLE_TEST_SECRET = "host-secret";
 	const controller = new AbortController();
 	const invocation = dockerPluginExecutor({ snapshotDir: "/snapshot", entry: "main.mjs", dataDir: "/data", image: "image", input: {}, signal: controller.signal });
-	setTimeout(() => controller.abort(), 25).unref();
 	try {
+		const deadline = Date.now() + 3_000;
+		while (!(await access(started).then(() => true, () => false)) && Date.now() < deadline) await delay(10);
+		await access(started);
+		controller.abort();
 		await assert.rejects(invocation, /plugin invocation aborted/);
 		await access(marker);
 		assert.equal(await readFile(marker, "utf8"), "missing-secret");
 	} finally {
+		controller.abort();
 		if (previousSecret === undefined) delete process.env.CRUMBLE_TEST_SECRET;
 		else process.env.CRUMBLE_TEST_SECRET = previousSecret;
 		fake.restore();

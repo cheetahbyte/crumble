@@ -26,6 +26,8 @@ export interface PiRpcOptions {
 	closeGraceMs?: number;
 }
 
+// Pi's packaged RpcClient owns spawning and merges the host environment. This adapter
+// accepts a tenant-scoped child from our runner and keeps request/teardown deadlines.
 export class PiRpc {
 	readonly exited: Promise<number | null>;
 	readonly failure: Promise<Error | null>;
