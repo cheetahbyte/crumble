@@ -123,6 +123,7 @@ test("preparing a tenant rejects symlinked databases, SQLite sidecars, and Pi co
 			`${tenant.jobsDatabasePath}-wal`,
 			`${tenant.jobsDatabasePath}-shm`,
 			join(tenant.agentDir, "auth.json"),
+			join(tenant.agentDir, "settings.json"),
 			join(tenant.agentDir, "models.json"),
 			join(tenant.agentDir, "models-cache.json"),
 		];

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { tenantEnvironment, type TenantConfig } from "./tenants.ts";
 
 type AuthType = Parameters<ModelRuntime["login"]>[1];
@@ -44,6 +44,7 @@ export async function runAuthLogin(tenant: TenantConfig, requestedType?: AuthTyp
 	const provider = runtime.getProvider(tenant.provider);
 	if (!provider) throw new Error(`Unknown Pi provider: ${tenant.provider}`);
 	const type = selectAuthType(provider, requestedType);
+	const settings = SettingsManager.create(tenant.homeDir, tenant.agentDir);
 	const controller = new AbortController();
 	const cancel = () => controller.abort(new Error("Login cancelled"));
 	const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -53,7 +54,7 @@ export async function runAuthLogin(tenant: TenantConfig, requestedType?: AuthTyp
 			signal: controller.signal,
 			prompt: (prompt) => ask(prompt, cancel),
 			notify: showAuthEvent,
-		});
+		}, { getDeviceId: () => settings.getOrCreateDeviceId() });
 		console.log(`Authentication saved for ${tenant.provider} in this tenant's private agent directory.`);
 		return true;
 	} catch (error) {
@@ -61,6 +62,7 @@ export async function runAuthLogin(tenant: TenantConfig, requestedType?: AuthTyp
 		throw error;
 	} finally {
 		for (const signal of signals) process.off(signal, cancel);
+		await settings.flush();
 	}
 }
 
