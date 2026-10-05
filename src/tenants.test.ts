@@ -51,6 +51,18 @@ test("a configured file must list tenants and a selected tenant must exist", () 
 	});
 });
 
+test("config schema errors identify malformed fields", () => {
+	withTempDir((dir) => {
+		const path = join(dir, "crumble.json");
+		writeFileSync(path, JSON.stringify({ provider: 42, tenants: [{ id: "one" }] }));
+		assert.throws(() => loadAppConfig({ CRUMBLE_CONFIG: path }), /provider/);
+		writeFileSync(path, JSON.stringify({ runner: "remote", tenants: [{ id: "one" }] }));
+		assert.throws(() => loadAppConfig({ CRUMBLE_CONFIG: path }), /runner must be/);
+		writeFileSync(path, JSON.stringify({ tenants: [{ id: 42 }] }));
+		assert.throws(() => loadAppConfig({ CRUMBLE_CONFIG: path }), /tenants\.0\.id must be a string/);
+	});
+});
+
 test("tenant IDs and Discord account mappings are validated", () => {
 	assert.throws(() => createTenantConfig("/data", { id: "../other" }, { provider: "p", model: "m" }), /Invalid tenant id/);
 	assert.throws(() => createTenantConfig("/data", { id: "ok", discordUserId: "not-a-snowflake" }, { provider: "p", model: "m" }), /Invalid Discord user id/);

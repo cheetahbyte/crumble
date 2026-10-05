@@ -39,20 +39,7 @@ const RawAppConfigSchema = Type.Object({
 	tenants: Type.Optional(Type.Array(RawTenantSchema)),
 }, { additionalProperties: true });
 
-interface RawAppConfig extends Static<typeof RawAppConfigSchema> {
-	dataDir?: string;
-	provider?: string;
-	model?: string;
-	sandboxImage?: string;
-	runner?: "sandbox" | "host";
-	tenants?: Array<{
-		id: string;
-		discordUserId?: string;
-		provider?: string;
-		model?: string;
-		timezone?: string;
-	}>;
-}
+type RawAppConfig = Static<typeof RawAppConfigSchema>;
 
 function nonEmptyString(value: unknown, label: string): string | undefined {
 	if (value === undefined) return undefined;
@@ -70,11 +57,12 @@ function parseConfig(path: string): RawAppConfig {
 	}
 	if (!Value.Check(RawAppConfigSchema, value)) {
 		const error = Value.Errors(RawAppConfigSchema, value)[0];
-		const path = String(error && "path" in error ? error.path : "").replace(/^\//, "").replaceAll("/", ".") || "config";
+		const path = String(error?.instancePath ?? "").replace(/^\//, "").replaceAll("/", ".") || "config";
 		if (path === "config") throw new Error("Crumble config must be a JSON object");
 		if (path === "tenants") throw new Error("tenants must be an array");
 		if (/^tenants\.\d+$/.test(path)) throw new Error(`${path} must be an object`);
 		if (/^tenants\.\d+\.id$/.test(path)) throw new Error(`${path} must be a string`);
+		if (path === "runner") throw new Error('runner must be "sandbox" or "host"');
 		throw new Error(`${path} must have a valid configuration value`);
 	}
 	const raw = value;

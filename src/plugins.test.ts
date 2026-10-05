@@ -67,6 +67,16 @@ test("invalid paths and symlinks are rejected", async () => {
 	} finally { await rm(f.base, { recursive: true, force: true }); }
 });
 
+test("manifest schema errors identify malformed fields", async () => {
+	const f = await fixture();
+	try {
+		await writeFile(join(f.source, "plugin.json"), JSON.stringify({ name: "weather", description: 42, entry: "main.mjs" }));
+		await assert.rejects(f.manager.install("capabilities/weather"), /plugin description must be non-empty/);
+		await writeFile(join(f.source, "plugin.json"), JSON.stringify({ name: "weather", description: "Weather", entry: "main.mjs", instructions: 42 }));
+		await assert.rejects(f.manager.install("capabilities/weather"), /plugin instructions must be a string/);
+	} finally { await rm(f.base, { recursive: true, force: true }); }
+});
+
 test("runtime failure quarantines one plugin and safe mode disables all plugins", async () => {
 	const f = await fixture();
 	try {

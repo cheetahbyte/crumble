@@ -33,11 +33,11 @@ export function applyLearning(output: string, request: InboundRequest, evidence:
 	const value: unknown = JSON.parse(output.trim().replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, ""));
 	if (!Value.Check(ProposalSchema, value) || value.memories.length + value.skills.length > 3) throw new Error("Invalid learning proposal");
 	const memories = value.memories.map((entry: MemoryProposal) => {
-		if (!entry.key.trim() || !entry.value.trim() || !entry.evidence.trim() || !request.text.includes(entry.evidence) || secret(JSON.stringify(entry))) throw new Error("Memory needs explicit user evidence and must not contain secrets");
+		if (!entry.key.trim() || !entry.value.trim() || !entry.evidence.trim() || entry.key.length > 256 || entry.value.length > 2_000 || entry.evidence.length > 2_000 || !request.text.includes(entry.evidence) || secret(JSON.stringify(entry))) throw new Error("Memory needs explicit user evidence and must not contain secrets");
 		return { key: entry.key, value: entry.value };
 	});
 	const skills = value.skills.map((entry: SkillProposal) => {
-		if (!entry.name.trim() || !entry.description.trim() || !entry.instructions.trim() || !entry.reason.trim() || !entry.evidence.trim() || !(request.text.includes(entry.evidence) || evidence.includes(entry.evidence)) || secret(JSON.stringify(entry))) throw new Error("Skill needs supporting evidence and must not contain secrets");
+		if (!entry.name.trim() || !entry.description.trim() || !entry.instructions.trim() || !entry.reason.trim() || !entry.evidence.trim() || entry.name.length > 100 || entry.description.length > 500 || entry.instructions.length > 12_000 || entry.reason.length > 1_000 || entry.evidence.length > 2_000 || !(request.text.includes(entry.evidence) || evidence.includes(entry.evidence)) || secret(JSON.stringify(entry))) throw new Error("Skill needs supporting evidence and must not contain secrets");
 		return { name: entry.name, description: entry.description, instructions: entry.instructions, reason: entry.reason };
 	});
 	for (const entry of memories) state.setMemory(entry.key, entry.value, `Learned from request ${request.id}`);

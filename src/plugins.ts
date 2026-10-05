@@ -32,32 +32,19 @@ export interface PluginInfo {
 	error?: string;
 }
 
-interface Manifest {
-	name: string;
-	description: string;
-	instructions?: string;
-	entry: string;
-}
-
 const ManifestSchema = Type.Object({
 	name: Type.String(), description: Type.String(), instructions: Type.Optional(Type.String()), entry: Type.String(),
 }, { additionalProperties: true });
 const PluginRecordSchema = Type.Object({
-	name: Type.String(), description: Type.String(), instructions: Type.Optional(Type.String()), entry: Type.String(),
+	...ManifestSchema.properties,
 	version: Type.String(), history: Type.Array(Type.String()), enabled: Type.Boolean(), lastError: Type.Optional(Type.String()),
 }, { additionalProperties: true });
 const RegistrySchema = Type.Object({ plugins: Type.Record(Type.String(), Type.Unknown()) }, { additionalProperties: true });
 
-interface PluginRecord extends Manifest {
-	version: string;
-	history: string[];
-	enabled: boolean;
-	lastError?: string;
-}
-
-interface RegistryData {
-	plugins: Record<string, PluginRecord>;
-}
+type Manifest = Static<typeof ManifestSchema>;
+type PluginRecord = Static<typeof PluginRecordSchema>;
+type RegistryData = Static<typeof RegistrySchema>;
+type ValidatedRegistryData = Omit<RegistryData, "plugins"> & { plugins: Record<string, PluginRecord> };
 
 interface ValidatedSnapshot {
 	directory: string;
@@ -107,7 +94,7 @@ function parseManifest(value: unknown): Manifest {
 	if (!Value.Check(ManifestSchema, value)) {
 		if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("plugin.json must be an object");
 		const first = Value.Errors(ManifestSchema, value)[0];
-		const path = String(first && "path" in first ? first.path : "");
+		const path = String(first?.instancePath ?? "");
 		if (path.endsWith("/name")) throw new Error("plugin name must be a lowercase slug");
 		if (path.endsWith("/description")) throw new Error("plugin description must be non-empty");
 		if (path.endsWith("/entry")) throw new Error("plugin entry must be a relative path");
@@ -136,7 +123,7 @@ export class PluginManager {
 	private readonly disabled: boolean;
 	private readonly executor: PluginExecutor;
 	private realRootDir?: string;
-	private registry: RegistryData = { plugins: {} };
+	private registry: ValidatedRegistryData = { plugins: {} };
 	private loadError?: string;
 	private malformedRecords: PluginInfo[] = [];
 	private initialized?: Promise<void>;
@@ -173,7 +160,9 @@ export class PluginManager {
 			try {
 				const value: unknown = JSON.parse(await readFile(registryPath, "utf8"));
 				if (Value.Check(RegistrySchema, value)) {
-					this.registry.plugins = Object.fromEntries(Object.entries((value as RegistryData).plugins).filter(([name, record]) => {
+					const registry = value as RegistryData;
+					const plugins: Record<string, PluginRecord> = {};
+					for (const [name, record] of Object.entries(registry.plugins)) {
 						try {
 							if (!SLUG.test(name) || !Value.Check(PluginRecordSchema, record)) throw new Error("invalid plugin record");
 							parseManifest(record);
@@ -181,12 +170,12 @@ export class PluginManager {
 							if (typed.name !== name) throw new Error("plugin record name does not match its key");
 							if (!VERSION.test(typed.version)) throw new Error("invalid plugin version");
 							if (!typed.history.every((item) => VERSION.test(item))) throw new Error("invalid plugin history");
-							return true;
+							plugins[name] = typed;
 						} catch (error) {
 							this.malformedRecords.push({ name: SLUG.test(name) ? name : "_invalid", description: "Malformed plugin record", status: "error", error: shortError(error) });
-							return false;
 						}
-					}));
+					}
+					this.registry.plugins = plugins;
 				} else this.loadError = "plugin registry has an invalid format";
 			} catch (error) {
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.loadError = `could not read plugin registry: ${shortError(error)}`;

@@ -36,3 +36,20 @@ test("learning validates evidence before writes and retains skill provenance", a
 		assert.throws(() => applyLearning(JSON.stringify({ memories: [{ key: "secret", value: "api_key=private", evidence: "I prefer short replies." }], skills: [] }), request, "", state, learning));
 	} finally { learning.close(); state.close(); rmSync(root, { recursive: true, force: true }); }
 });
+
+test("learning keeps UTF-16 size limits and validates all entries before writes", () => {
+	const root = mkdtempSync(join(tmpdir(), "crumble-reflect-size-"));
+	const state = new AssistantState(join(root, "state.db"));
+	const learning = new LearningStore(join(root, "state.db"));
+	state.enqueue({ id: "size", text: "Remember this evidence.", source: "discord" });
+	const request = state.get("size")!;
+	try {
+		const proposal = {
+			memories: [{ key: "😀".repeat(256), value: "value", evidence: "Remember this evidence." }],
+			skills: [{ name: "valid", description: "Valid", instructions: "Keep it", reason: "Evidence", evidence: "Remember this evidence." }],
+		};
+		assert.throws(() => applyLearning(JSON.stringify(proposal), request, "", state, learning));
+		assert.equal(state.listMemory().length, 0);
+		assert.equal(learning.readSkill("valid"), undefined);
+	} finally { learning.close(); state.close(); rmSync(root, { recursive: true, force: true }); }
+});
