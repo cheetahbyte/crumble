@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { BrowserManager } from "./browser.ts";
 
@@ -27,6 +27,32 @@ test("aborted browser action does not launch Docker", async () => {
 	const controller = new AbortController();
 	controller.abort();
 	await assert.rejects(manager.act({ action: "snapshot" }, controller.signal), /aborted/);
+});
+
+test("browser Docker output preserves trailing newlines and bounds stderr diagnostics", async () => {
+	const base = await mkdtemp(join(tmpdir(), "crumble-browser-execa-"));
+	const bin = join(base, "bin");
+	await mkdir(bin);
+	const docker = join(bin, "docker");
+	await writeFile(docker, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === "container") { process.stderr.write("No such container\\n" + "e".repeat(20_000)); process.exit(1); }
+if (args[0] === "image") { process.stdout.write("image-id\\n"); process.exit(0); }
+if (args[0] === "run") { process.stdout.write("container-id\\n"); process.exit(0); }
+if (args[0] === "exec") { let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => { const request = JSON.parse(input); process.stdout.write(request.health ? JSON.stringify({ok: true}) : JSON.stringify({ok: true, result: "raw\\n"})); }); }
+if (args[0] === "stop") process.exit(0);
+`);
+	await chmod(docker, 0o755);
+	const previousPath = process.env.PATH;
+	process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+	const manager = new BrowserManager({ tenantId: "execa-browser", rootDir: join(base, "profile"), image: "image" });
+	try {
+		assert.equal(await manager.act({ action: "snapshot" }), "raw\n");
+	} finally {
+		await manager.close();
+		process.env.PATH = previousPath;
+		await rm(base, { recursive: true, force: true });
+	}
 });
 
 test("browser Docker smoke: actions, profile persistence and tenant isolation", { timeout: 120_000 }, async (t) => {

@@ -23,6 +23,7 @@ export const dockerPluginExecutor: PluginExecutor = async (context) => {
 	if (Buffer.byteLength(input) > INPUT_LIMIT) throw new Error(`input exceeds ${INPUT_LIMIT} bytes`);
 	if (context.signal?.aborted) throw new Error("plugin invocation aborted");
 	const container = `crumble-plugin-${randomUUID()}`;
+	const dockerEnvironment = { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" };
 	const args = [
 		"run", "--rm", "-i", "--name", container, "--init", "--network", "bridge",
 		"--read-only", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
@@ -34,14 +35,21 @@ export const dockerPluginExecutor: PluginExecutor = async (context) => {
 	];
 	const removeContainer = async () => {
 		try {
-			await execa("docker", ["rm", "-f", container], { stdio: "ignore" });
+			await execa("docker", ["rm", "-f", container], {
+				cwd: process.cwd(),
+				stdio: "ignore",
+				env: dockerEnvironment,
+				extendEnv: false,
+				timeout: 5_000,
+				forceKillAfterDelay: 0,
+			});
 		} catch { /* Cleanup must never crash the host process. */ }
 	};
 	try {
 		const result = await execa("docker", args, {
 			input,
-			cwd: "/",
-			env: { PATH: process.env.PATH ?? "/usr/bin:/bin", LANG: "C.UTF-8" },
+			cwd: process.cwd(),
+			env: dockerEnvironment,
 			extendEnv: false,
 			cancelSignal: context.signal,
 			timeout: TIMEOUT_MS,

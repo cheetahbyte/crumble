@@ -30,22 +30,33 @@ export interface BrowserManagerOptions {
 
 function docker(args: string[], input?: string, signal?: AbortSignal, timeoutMs = START_TIMEOUT_MS): Promise<Buffer> {
 	if (signal?.aborted) return Promise.reject(new Error("aborted"));
-	return execa("docker", args, {
+	const stderrChunks: Buffer[] = [];
+	let stderrBytes = 0;
+	const command = execa("docker", args, {
 		input: input ?? "",
-		cwd: "/",
+		cwd: process.cwd(),
 		encoding: "buffer",
 		stripFinalNewline: false,
+		buffer: { stdout: true, stderr: false },
 		maxBuffer: { stdout: MAX_RESPONSE_BYTES, stderr: 100_000_000 },
 		cancelSignal: signal,
 		timeout: timeoutMs,
 		forceKillAfterDelay: 1_000,
-	}).then(({ stdout }) => Buffer.from(stdout as Uint8Array)).catch((error: unknown) => {
+	});
+	command.stderr?.on("data", (chunk: Buffer) => {
+		const remaining = 16_000 - stderrBytes;
+		if (remaining > 0) {
+			stderrChunks.push(chunk.subarray(0, remaining));
+			stderrBytes += Math.min(chunk.length, remaining);
+		}
+	});
+	return command.then(({ stdout }) => Buffer.from(stdout as Uint8Array)).catch((error: unknown) => {
 		const result = error as { isCanceled?: boolean; timedOut?: boolean; isMaxBuffer?: boolean; stderr?: Uint8Array; message?: string };
 		if (result.isCanceled) throw new Error("aborted");
 		if (result.timedOut) throw new Error("browser docker command timed out");
 		if (result.isMaxBuffer) throw new Error("browser response exceeded the output limit");
-		const stderr = result.stderr ? Buffer.from(result.stderr).subarray(0, 16_000).toString().trim() : "";
-		throw new Error(stderr || result.message || "docker command failed");
+		const diagnostic = Buffer.concat(stderrChunks).toString().trim();
+		throw new Error(diagnostic || result.message || "docker command failed");
 	});
 }
 
