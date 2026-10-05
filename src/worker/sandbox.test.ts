@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { runSandboxBash, workspacePath } from "./sandbox.ts";
+import sandboxExtension, { runSandboxBash, workspacePath } from "./sandbox.ts";
 
 test("workspace path mapping enforces a path component boundary", () => {
 	assert.equal(workspacePath("/work/crumble", "/work/crumble/src/main.ts"), "/workspace/src/main.ts");
@@ -14,6 +14,23 @@ test("workspace path mapping enforces a path component boundary", () => {
 	assert.throws(() => workspacePath("/work/crumble", "/workspace-other/file"), /inside the project workspace/);
 	assert.throws(() => workspacePath("/work/crumble", "/work/crumble-other/file"), /inside the project workspace/);
 	assert.throws(() => workspacePath("/work/crumble", "/etc/passwd"), /inside the project workspace/);
+});
+
+test("worker prompt shows the sandbox working directory instead of the host path", async () => {
+	type Event = { systemPrompt: string; systemPromptOptions: { cwd: string; sections: Record<string, string> } };
+	let beforeAgentStart: ((event: Event) => Promise<{ systemPrompt?: string } | undefined>) | undefined;
+	process.env.CRUMBLE_SANDBOX_CONTAINER = "test-container";
+	try {
+		sandboxExtension({
+			registerTool: () => undefined,
+			on: (event: string, handler: unknown) => { if (event === "before_agent_start") beforeAgentStart = handler as typeof beforeAgentStart; },
+		} as never);
+	} finally { delete process.env.CRUMBLE_SANDBOX_CONTAINER; }
+	assert.ok(beforeAgentStart);
+	const event: Event = { systemPrompt: `base\n<cwd>\n${process.cwd()}\n</cwd>`, systemPromptOptions: { cwd: process.cwd(), sections: {} } };
+	const result = await beforeAgentStart(event);
+	assert.equal(result?.systemPrompt, undefined, "a forced prompt would bypass Pi's structured sections");
+	assert.equal(event.systemPromptOptions.cwd, "/workspace");
 });
 
 test("an already-aborted signal does not start a sandbox process", async () => {

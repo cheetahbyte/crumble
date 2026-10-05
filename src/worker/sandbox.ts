@@ -208,10 +208,8 @@ export default function (pi: ExtensionAPI) {
 	);
 	pi.registerTool(createBashToolDefinition(hostCwd, { operations: bash }));
 
-	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: event.systemPrompt.replace(
-			`Current working directory: ${hostCwd}`,
-			`Current working directory: ${CONTAINER_CWD} (inside a Linux sandbox container)`,
-		),
-	}));
+	pi.on("before_agent_start", async (event) => {
+		event.systemPromptOptions.cwd = CONTAINER_CWD;
+		event.systemPromptOptions.sections.sandbox = "File and shell tools run inside a Linux sandbox container.";
+	});
 }
