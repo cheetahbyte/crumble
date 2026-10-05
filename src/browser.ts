@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
+import { execa } from "execa";
 
 const MAX_RESPONSE_BYTES = 512_000;
 const ACTION_TIMEOUT_MS = 45_000;
@@ -30,51 +30,22 @@ export interface BrowserManagerOptions {
 
 function docker(args: string[], input?: string, signal?: AbortSignal, timeoutMs = START_TIMEOUT_MS): Promise<Buffer> {
 	if (signal?.aborted) return Promise.reject(new Error("aborted"));
-	return new Promise((resolvePromise, reject) => {
-		const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
-		const stdout: Buffer[] = [];
-		const stderr: Buffer[] = [];
-		let bytes = 0;
-		let settled = false;
-		const timer = setTimeout(() => {
-			child.kill("SIGKILL");
-			finish(new Error("browser docker command timed out"));
-		}, timeoutMs);
-		const finish = (error?: Error, value?: Buffer) => {
-			if (settled) return;
-			settled = true;
-			clearTimeout(timer);
-			signal?.removeEventListener("abort", abort);
-			if (error) reject(error);
-			else resolvePromise(value ?? Buffer.alloc(0));
-		};
-		const abort = () => {
-			child.kill("SIGTERM");
-			const kill = setTimeout(() => child.kill("SIGKILL"), 1_000);
-			kill.unref();
-			finish(new Error("aborted"));
-		};
-		child.stdout.on("data", (chunk: Buffer) => {
-			bytes += chunk.length;
-			if (bytes > MAX_RESPONSE_BYTES) {
-				child.kill("SIGKILL");
-				finish(new Error("browser response exceeded the output limit"));
-				return;
-			}
-			stdout.push(chunk);
-		});
-		child.stderr.on("data", (chunk: Buffer) => {
-			if (Buffer.concat(stderr).length < 16_000) stderr.push(chunk);
-		});
-		child.once("error", (error) => finish(error));
-		child.stdin.once("error", (error) => finish(error));
-		child.once("close", (code) => {
-			if (code === 0) finish(undefined, Buffer.concat(stdout));
-			else finish(new Error(Buffer.concat(stderr).toString().trim() || `docker exited with code ${code}`));
-		});
-		signal?.addEventListener("abort", abort, { once: true });
-		if (signal?.aborted) abort();
-		child.stdin.end(input ?? "");
+	return execa("docker", args, {
+		input: input ?? "",
+		cwd: "/",
+		encoding: "buffer",
+		stripFinalNewline: false,
+		maxBuffer: { stdout: MAX_RESPONSE_BYTES, stderr: 100_000_000 },
+		cancelSignal: signal,
+		timeout: timeoutMs,
+		forceKillAfterDelay: 1_000,
+	}).then(({ stdout }) => Buffer.from(stdout as Uint8Array)).catch((error: unknown) => {
+		const result = error as { isCanceled?: boolean; timedOut?: boolean; isMaxBuffer?: boolean; stderr?: Uint8Array; message?: string };
+		if (result.isCanceled) throw new Error("aborted");
+		if (result.timedOut) throw new Error("browser docker command timed out");
+		if (result.isMaxBuffer) throw new Error("browser response exceeded the output limit");
+		const stderr = result.stderr ? Buffer.from(result.stderr).subarray(0, 16_000).toString().trim() : "";
+		throw new Error(stderr || result.message || "docker command failed");
 	});
 }
 

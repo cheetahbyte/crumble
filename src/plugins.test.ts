@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
@@ -150,6 +150,27 @@ test("Docker executor keeps stdin open for JSON input and passes it through", as
 		const result = JSON.parse(await dockerPluginExecutor({ snapshotDir: "/plugin-snapshot", entry: "main.mjs", dataDir: "/plugin-data", image: "image", input: { hello: "world" } })) as { args: string[]; input: string };
 		assert.ok(result.args.includes("-i"));
 		assert.equal(result.input, '{"hello":"world"}');
+	} finally {
+		process.env.PATH = previousPath;
+		await rm(base, { recursive: true, force: true });
+	}
+});
+
+test("aborted Docker plugin invocation does not spawn Docker", async () => {
+	const base = await mkdtemp(join(tmpdir(), "crumble-fake-docker-abort-"));
+	const bin = join(base, "bin");
+	const marker = join(base, "spawned");
+	const previousPath = process.env.PATH;
+	try {
+		await mkdir(bin);
+		const docker = join(bin, "docker");
+		await writeFile(docker, `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "spawned");\n`);
+		await chmod(docker, 0o755);
+		process.env.PATH = `${bin}${delimiter}${previousPath ?? ""}`;
+		const controller = new AbortController();
+		controller.abort();
+		await assert.rejects(dockerPluginExecutor({ snapshotDir: "/plugin-snapshot", entry: "main.mjs", dataDir: "/plugin-data", image: "image", input: {}, signal: controller.signal }), /aborted/);
+		await assert.rejects(access(marker));
 	} finally {
 		process.env.PATH = previousPath;
 		await rm(base, { recursive: true, force: true });
