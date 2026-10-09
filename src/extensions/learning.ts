@@ -1,10 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { containsSecret, type LearningStore } from "../learning.ts";
-
-function text(value: string) {
-	return { content: [{ type: "text" as const, text: value }], details: undefined };
-}
+import { toolResult } from "./result.ts";
 
 const MAX_TRANSCRIPT_OUTPUT = 50_000;
 const MAX_INDEX_SKILLS = 20;
@@ -53,7 +50,7 @@ export function learningExtension(
 			}),
 			execute: async (_id, params) => {
 				const results = store.searchHistory(params.query, params.limit ?? 10, params.offset ?? 0);
-				return text(JSON.stringify(results, null, 2) || "[]");
+				return toolResult(JSON.stringify(results, null, 2) || "[]");
 			},
 		});
 
@@ -64,12 +61,12 @@ export function learningExtension(
 			parameters: Type.Object({ id: Type.String() }),
 			execute: async (_id, params) => {
 				const transcript = store.readHistory(params.id);
-				if (!transcript) return text("No finished history entry found for that ID.");
+				if (!transcript) return toolResult("No finished history entry found for that ID.");
 				const output = JSON.stringify(transcript, null, 2);
 				if (output.length > MAX_TRANSCRIPT_OUTPUT) {
-					return text(`Transcript ${transcript.id} is too large to return in one response (${output.length} characters; limit ${MAX_TRANSCRIPT_OUTPUT}). Use search_history for bounded snippets.`);
+					return toolResult(`Transcript ${transcript.id} is too large to return in one response (${output.length} characters; limit ${MAX_TRANSCRIPT_OUTPUT}). Use search_history for bounded snippets.`);
 				}
-				return text(output);
+				return toolResult(output);
 			},
 		});
 
@@ -88,38 +85,38 @@ export function learningExtension(
 			execute: async (_id, params) => {
 				switch (params.action) {
 					case "list":
-						return text(JSON.stringify(store.listSkills(), null, 2));
+						return toolResult(JSON.stringify(store.listSkills(), null, 2));
 					case "save": {
 						if (params.name === undefined || params.description === undefined || params.instructions === undefined) {
-							return text("Saving a skill requires name, description, and instructions.");
+							return toolResult("Saving a skill requires name, description, and instructions.");
 						}
 						if (containsSecret(`${params.name}\n${params.description}\n${params.instructions}\n${params.reason ?? ""}`)) {
 							throw new Error("Not saved: this looks like a credential, and credentials are never stored in procedures.");
 						}
-						return text(JSON.stringify(store.saveSkill(params.name, params.description, params.instructions, {
+						return toolResult(JSON.stringify(store.saveSkill(params.name, params.description, params.instructions, {
 							sourceRequestId: options.currentRequest?.()?.id,
 							reason: params.reason,
 						}), null, 2));
 					}
 					case "enable":
-						if (params.name === undefined) return text("Enabling a skill requires name.");
-						return text(store.enableSkill(params.name) ? `Enabled ${params.name}.` : `No disabled skill named ${params.name}.`);
+						if (params.name === undefined) return toolResult("Enabling a skill requires name.");
+						return toolResult(store.enableSkill(params.name) ? `Enabled ${params.name}.` : `No disabled skill named ${params.name}.`);
 					case "disable":
-						if (params.name === undefined) return text("Disabling a skill requires name.");
-						return text(store.disableSkill(params.name) ? `Disabled ${params.name}.` : `No enabled skill named ${params.name}.`);
+						if (params.name === undefined) return toolResult("Disabling a skill requires name.");
+						return toolResult(store.disableSkill(params.name) ? `Disabled ${params.name}.` : `No enabled skill named ${params.name}.`);
 					case "rollback": {
-						if (params.name === undefined) return text("Rolling back a skill requires name.");
+						if (params.name === undefined) return toolResult("Rolling back a skill requires name.");
 						const skill = store.rollbackSkill(params.name, params.version);
-						return text(skill ? JSON.stringify(skill, null, 2) : `No earlier version available for ${params.name}.`);
+						return toolResult(skill ? JSON.stringify(skill, null, 2) : `No earlier version available for ${params.name}.`);
 					}
 					case "history":
-						if (params.name === undefined) return text("Reading skill history requires name.");
-						return text(JSON.stringify(store.skillHistory(params.name), null, 2));
+						if (params.name === undefined) return toolResult("Reading skill history requires name.");
+						return toolResult(JSON.stringify(store.skillHistory(params.name), null, 2));
 					case "delete":
-						if (params.name === undefined) return text("Deleting a skill requires name.");
-						return text(store.deleteSkill(params.name) ? `Deleted ${params.name} and all its versions.` : `No skill named ${params.name}.`);
+						if (params.name === undefined) return toolResult("Deleting a skill requires name.");
+						return toolResult(store.deleteSkill(params.name) ? `Deleted ${params.name} and all its versions.` : `No skill named ${params.name}.`);
 					default:
-						return text("Unknown action. Choose list, save, enable, disable, rollback, history, or delete.");
+						return toolResult("Unknown action. Choose list, save, enable, disable, rollback, history, or delete.");
 				}
 			},
 		});
@@ -131,7 +128,7 @@ export function learningExtension(
 			parameters: Type.Object({ enabled: Type.Boolean() }),
 			execute: async (_id, params) => {
 				store.setLearningEnabled(params.enabled);
-				return text(`Automatic learning is ${params.enabled ? "on" : "off"}.`);
+				return toolResult(`Automatic learning is ${params.enabled ? "on" : "off"}.`);
 			},
 		});
 
@@ -142,9 +139,9 @@ export function learningExtension(
 			parameters: Type.Object({ name: Type.String() }),
 			execute: async (_id, params) => {
 				const skill = store.readSkill(params.name);
-				if (!skill) return text(`No learned procedure named ${params.name}.`);
-				if (!skill.enabled) return text(`The learned procedure ${params.name} is disabled.`);
-				return text(`Procedure: ${skill.name} (version ${skill.version})\n${skill.description}\n\nInstructions:\n${skill.instructions}`);
+				if (!skill) return toolResult(`No learned procedure named ${params.name}.`);
+				if (!skill.enabled) return toolResult(`The learned procedure ${params.name} is disabled.`);
+				return toolResult(`Procedure: ${skill.name} (version ${skill.version})\n${skill.description}\n\nInstructions:\n${skill.instructions}`);
 			},
 		});
 	};

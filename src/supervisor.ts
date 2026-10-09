@@ -1,4 +1,5 @@
-import type { Job, JobStatus, JobStore } from "./jobs.ts";
+import { join } from "node:path";
+import type { Job, JobPatch, JobStore } from "./jobs.ts";
 import { PiRpc } from "./rpc.ts";
 import type { WorkerRunner } from "./runners.ts";
 
@@ -11,10 +12,11 @@ const WORKER_PROMPT = [
 	"When the task is finished, end with a short summary: what you changed, how you verified it, and anything you were unsure about.",
 ].join("\n");
 
+const ASK_EXTENSION = join(import.meta.dirname, "worker", "ask.ts");
+
 export interface SupervisorOptions {
 	store: JobStore;
 	runner: WorkerRunner;
-	askExtension: string;
 	provider: string;
 	model: string;
 	onSettled: (job: Job) => void;
@@ -33,7 +35,8 @@ interface ActiveJob {
 	abortPromise?: Promise<boolean>;
 }
 
-type Completion = { kind: "result"; question: string | null; text: string | null } | { kind: "error"; error: Error };
+const CANCELLED = "Cancelled by request.";
+const INTERRUPTED = "Worker stopped because the application is shutting down. Explicitly retry to resume this Pi session.";
 
 export class Supervisor {
 	private options: SupervisorOptions;
@@ -73,7 +76,7 @@ export class Supervisor {
 		if (job.status !== "running") throw new Error(`Job ${jobId} is not running`);
 		const active = this.active.get(jobId);
 		if (!active) {
-			return this.settle(jobId, { status: "cancelled", error: "Cancelled by request." });
+			return this.settle(jobId, { status: "cancelled", error: CANCELLED });
 		}
 		if (active.kind === null) {
 			active.kind = "cancelled";
@@ -125,121 +128,91 @@ export class Supervisor {
 	}
 
 	private async run(job: Job, message: string, active: ActiveJob): Promise<void> {
-		const { store, runner, askExtension, provider, model, onSettled } = this.options;
+		const patch = active.kind === null ? await this.attempt(job, message, active) : undefined;
+		this.settle(job.id, active.kind === null && patch ? patch : {
+			status: active.kind ?? "interrupted",
+			error: active.kind === "cancelled" ? CANCELLED : INTERRUPTED,
+		});
+	}
+
+	/** Run one worker turn. A cancel or shutdown during the turn is applied by the caller. */
+	private async attempt(job: Job, message: string, active: ActiveJob): Promise<JobPatch | undefined> {
+		const { runner, provider, model, closeGraceMs } = this.options;
 		let rpc: PiRpc | undefined;
-		let deadlineTimer: NodeJS.Timeout | undefined;
 		try {
-			if (active.kind !== null) {
-				this.settle(job.id, { status: active.kind, error: active.kind === "cancelled" ? "Cancelled by request." : "Application is shutting down." });
-				return;
-			}
 			// --session-id creates the session on the first run and reopens it on every resume.
 			rpc = new PiRpc(
 				runner.spawn(job, [
-					"--mode",
-					"rpc",
-					"--session-id",
-					job.id,
-					"--session-dir",
-					runner.sessionDir(job),
-					"--provider",
-					provider,
-					"--model",
-					model,
-					"--no-extensions",
-					"--no-skills",
-					"--no-prompt-templates",
-					"--no-approve",
-					"--tools",
-					"read,bash,edit,write,ask",
-					"-e",
-					askExtension,
-					"--append-system-prompt",
-					WORKER_PROMPT,
+					"--mode", "rpc",
+					"--session-id", job.id,
+					"--session-dir", runner.sessionDir(job),
+					"--provider", provider,
+					"--model", model,
+					"--no-extensions", "--no-skills", "--no-prompt-templates", "--no-approve",
+					"--tools", "read,bash,edit,write,ask",
+					"-e", ASK_EXTENSION,
+					"--append-system-prompt", WORKER_PROMPT,
 				]),
-				{ closeGraceMs: this.options.closeGraceMs },
+				{ closeGraceMs },
 			);
 			active.rpc = rpc;
-			let question: string | null = null;
-			let settledResolve!: () => void;
-			const settled = new Promise<void>((resolve) => (settledResolve = resolve));
-			rpc.onEvent((event) => {
-				if (event.type === "tool_execution_start" && event.toolName === "ask") {
-					const args = event.args as { question?: unknown };
-					question = typeof args.question === "string" ? args.question : null;
-				}
-				if (event.type === "agent_settled") settledResolve();
-			});
-
-			const timeoutMs = this.options.timeoutMs ?? 15 * 60_000;
-			const timeout = new Promise<Completion>((resolve) => {
-				deadlineTimer = setTimeout(() => resolve({ kind: "error", error: new Error(`Worker timed out after ${timeoutMs} ms`) }), timeoutMs);
-			});
-			const work: Promise<Completion> = (async () => {
-				try {
-					await rpc!.request({ type: "prompt", message }, timeoutMs);
-					const result = await Promise.race([
-						settled.then(() => ({ type: "settled" as const })),
-						rpc!.exited.then(() => ({ type: "exited" as const })),
-						rpc!.failure.then((error) =>
-							error ? { type: "error" as const, error } : new Promise<never>(() => {}),
-						),
-					]);
-					if (result.type === "exited") throw new Error("worker exited before finishing its run");
-					if (result.type === "error") throw result.error;
-					const last = (await rpc!.request({ type: "get_last_assistant_text" }, timeoutMs)) as { text: string | null };
-					return { kind: "result", question, text: last.text };
-				} catch (error) {
-					return { kind: "error", error: error instanceof Error ? error : new Error(String(error)) };
-				}
-			})();
-			const completion = await Promise.race([
-				work,
-				timeout,
-				active.stopSignal.then(() => ({ kind: "stopped" as const })),
-			]);
-			if (deadlineTimer) clearTimeout(deadlineTimer);
-			if (completion.kind === "stopped" || active.kind !== null) {
+			const result = await Promise.race([this.complete(rpc, message), active.stopSignal.then(() => undefined)]);
+			if (!result || active.kind !== null) {
 				await this.finishStoppedWorker(rpc, active);
-				this.settle(job.id, {
-					status: active.kind ?? "interrupted",
-					error: active.kind === "cancelled"
-						? "Cancelled by request."
-						: "Worker stopped because the application is shutting down. Explicitly retry to resume this Pi session.",
-				});
-				return;
+				return undefined;
 			}
-			if (completion.kind === "error") {
-				if (completion.error.message.startsWith("Worker timed out")) {
-					const aborted = await this.requestAbort(rpc);
-					if (aborted) await rpc.close(this.options.closeGraceMs);
-					else await rpc.terminate(this.options.closeGraceMs ?? 1_000);
-				} else await rpc.terminate(this.options.closeGraceMs ?? 1_000);
-				throw completion.error;
-			}
-			await rpc.close(this.options.closeGraceMs);
-			if (completion.question !== null) {
-				this.settle(job.id, { status: "waiting", question: completion.question, error: null });
-			} else if (completion.text === null) {
-				throw new Error("worker finished without a result");
-			} else {
-				this.settle(job.id, { status: "done", summary: completion.text, question: null, error: null });
-			}
+			await rpc.close(closeGraceMs);
+			if (result.question !== null) return { status: "waiting", question: result.question, error: null };
+			if (result.text === null) throw new Error("worker finished without a result");
+			return { status: "done", summary: result.text, question: null, error: null };
 		} catch (error) {
-			if (deadlineTimer) clearTimeout(deadlineTimer);
-			if (rpc) await rpc.terminate(this.options.closeGraceMs ?? 1_000);
+			if (rpc) await rpc.terminate(closeGraceMs ?? 1_000);
 			const reason = error instanceof Error ? error.message : String(error);
 			const detail = rpc?.stderr.trim();
-			const status: JobStatus = active.kind ?? "failed";
-			const errorText =
-				active.kind === "cancelled"
-					? "Cancelled by request."
-					: active.kind === "interrupted"
-						? "Worker stopped because the application is shutting down. Explicitly retry to resume this Pi session."
-						: detail
-							? `${reason}\n${detail}`
-							: reason;
-			this.settle(job.id, { status, error: errorText });
+			return { status: "failed", error: detail ? `${reason}\n${detail}` : reason };
+		}
+	}
+
+	/** Prompt the worker and wait until it settles, asks a question, or times out. */
+	private async complete(rpc: PiRpc, message: string): Promise<{ question: string | null; text: string | null }> {
+		const timeoutMs = this.options.timeoutMs ?? 15 * 60_000;
+		let question: string | null = null;
+		let settledResolve!: () => void;
+		const settled = new Promise<void>((resolve) => (settledResolve = resolve));
+		rpc.onEvent((event) => {
+			if (event.type === "tool_execution_start" && event.toolName === "ask") {
+				const args = event.args as { question?: unknown };
+				question = typeof args.question === "string" ? args.question : null;
+			}
+			if (event.type === "agent_settled") settledResolve();
+		});
+		const work = async () => {
+			await rpc.request({ type: "prompt", message }, timeoutMs);
+			const outcome = await Promise.race([
+				settled.then(() => "settled" as const),
+				rpc.exited.then(() => "exited" as const),
+				rpc.failure.then((error) => error ?? new Promise<never>(() => {})),
+			]);
+			if (outcome === "exited") throw new Error("worker exited before finishing its run");
+			if (outcome instanceof Error) throw outcome;
+			const last = (await rpc.request({ type: "get_last_assistant_text" }, timeoutMs)) as { text: string | null };
+			return { question, text: last.text };
+		};
+		let timer: NodeJS.Timeout | undefined;
+		let timedOut = false;
+		const deadline = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => {
+				timedOut = true;
+				reject(new Error(`Worker timed out after ${timeoutMs} ms`));
+			}, timeoutMs);
+		});
+		try {
+			return await Promise.race([work(), deadline]);
+		} catch (error) {
+			if (timedOut && await this.requestAbort(rpc)) await rpc.close(this.options.closeGraceMs);
+			throw error;
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -256,7 +229,7 @@ export class Supervisor {
 		else await rpc.terminate(this.options.closeGraceMs ?? 1_000);
 	}
 
-	private settle(jobId: string, patch: Parameters<JobStore["update"]>[1]): Job {
+	private settle(jobId: string, patch: JobPatch): Job {
 		const job = this.options.store.update(jobId, patch);
 		if (job.status !== "running") {
 			this.active.delete(jobId);

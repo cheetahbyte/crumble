@@ -2,18 +2,23 @@ import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
+import type { InferSelectModel } from "drizzle-orm";
+import type { plugins } from "./db/assistant-schema.ts";
+import { isWithin, SLUG as TENANT_ID } from "./paths.ts";
 import { dockerPluginExecutor, pluginDataPath, type PluginExecutor } from "./plugin-executor.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
-const TENANT_ID = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
-const REGISTRY = "plugins.json";
+/** Pre-SQLite registry file, imported once and then renamed. */
+const LEGACY_REGISTRY = "plugins.json";
 const MAX_SOURCE_FILES = 2_000;
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const VERSION = /^[a-f0-9]{16}$/;
 
 export interface PluginManagerOptions {
+	db: DatabaseSync;
 	rootDir: string;
 	workspacesDir: string;
 	image: string;
@@ -35,16 +40,28 @@ export interface PluginInfo {
 const ManifestSchema = Type.Object({
 	name: Type.String(), description: Type.String(), instructions: Type.Optional(Type.String()), entry: Type.String(),
 }, { additionalProperties: true });
-const PluginRecordSchema = Type.Object({
+const LegacyRecordSchema = Type.Object({
 	...ManifestSchema.properties,
 	version: Type.String(), history: Type.Array(Type.String()), enabled: Type.Boolean(), lastError: Type.Optional(Type.String()),
 }, { additionalProperties: true });
-const RegistrySchema = Type.Object({ plugins: Type.Record(Type.String(), Type.Unknown()) }, { additionalProperties: true });
+const LegacyRegistrySchema = Type.Object({ plugins: Type.Record(Type.String(), Type.Unknown()) }, { additionalProperties: true });
 
 type Manifest = Static<typeof ManifestSchema>;
-type PluginRecord = Static<typeof PluginRecordSchema>;
-type RegistryData = Static<typeof RegistrySchema>;
-type ValidatedRegistryData = Omit<RegistryData, "plugins"> & { plugins: Record<string, PluginRecord> };
+type PluginRecord = Static<typeof LegacyRecordSchema>;
+type PluginRow = InferSelectModel<typeof plugins>;
+
+function toRecord(row: PluginRow): PluginRecord {
+	return {
+		name: row.name,
+		description: row.description,
+		...(row.instructions !== null ? { instructions: row.instructions } : {}),
+		entry: row.entry,
+		version: row.version,
+		history: JSON.parse(row.history_json) as string[],
+		enabled: row.enabled === 1,
+		...(row.last_error !== null ? { lastError: row.last_error } : {}),
+	};
+}
 
 interface ValidatedSnapshot {
 	directory: string;
@@ -54,11 +71,6 @@ interface ValidatedSnapshot {
 function shortError(error: unknown): string {
 	const message = error instanceof Error ? error.message : String(error);
 	return message.replace(/[\r\n]+/g, " ").slice(0, 300);
-}
-
-function inside(parent: string, child: string): boolean {
-	const rel = relative(parent, child);
-	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
 }
 
 async function assertNoSymlinks(path: string): Promise<void> {
@@ -116,6 +128,7 @@ function parseManifest(value: unknown): Manifest {
 }
 
 export class PluginManager {
+	private readonly db: DatabaseSync;
 	private readonly rootDir: string;
 	private readonly workspacesDir: string;
 	private readonly image: string;
@@ -123,13 +136,12 @@ export class PluginManager {
 	private readonly disabled: boolean;
 	private readonly executor: PluginExecutor;
 	private realRootDir?: string;
-	private registry: ValidatedRegistryData = { plugins: {} };
 	private loadError?: string;
 	private malformedRecords: PluginInfo[] = [];
 	private initialized?: Promise<void>;
-	private writeChain: Promise<void> = Promise.resolve();
 
 	constructor(options: PluginManagerOptions) {
+		this.db = options.db;
 		this.rootDir = resolve(options.rootDir);
 		this.workspacesDir = resolve(options.workspacesDir);
 		this.image = options.image;
@@ -155,51 +167,53 @@ export class PluginManager {
 			await this.assertManagedPath(tenantDataRoot, { allowMissing: true });
 			await mkdir(tenantDataRoot, { recursive: true, mode: 0o700 });
 			await this.assertManagedPath(tenantDataRoot, { kind: "directory" });
-			const registryPath = join(this.rootDir, REGISTRY);
-			await this.assertManagedPath(registryPath, { allowMissing: true, kind: "file" });
-			try {
-				const value: unknown = JSON.parse(await readFile(registryPath, "utf8"));
-				if (Value.Check(RegistrySchema, value)) {
-					const registry = value as RegistryData;
-					const plugins: Record<string, PluginRecord> = {};
-					for (const [name, record] of Object.entries(registry.plugins)) {
-						try {
-							if (!SLUG.test(name) || !Value.Check(PluginRecordSchema, record)) throw new Error("invalid plugin record");
-							parseManifest(record);
-							const typed = record as Static<typeof PluginRecordSchema>;
-							if (typed.name !== name) throw new Error("plugin record name does not match its key");
-							if (!VERSION.test(typed.version)) throw new Error("invalid plugin version");
-							if (!typed.history.every((item) => VERSION.test(item))) throw new Error("invalid plugin history");
-							plugins[name] = typed;
-						} catch (error) {
-							this.malformedRecords.push({ name: SLUG.test(name) ? name : "_invalid", description: "Malformed plugin record", status: "error", error: shortError(error) });
-						}
-					}
-					this.registry.plugins = plugins;
-				} else this.loadError = "plugin registry has an invalid format";
-			} catch (error) {
-				if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.loadError = `could not read plugin registry: ${shortError(error)}`;
-			}
-			if (this.disabled) {
-				for (const record of Object.values(this.registry.plugins)) record.enabled = false;
-			}
+			await this.importLegacyRegistry();
 		})();
 		return this.initialized;
 	}
 
-	private persist(): Promise<void> {
-		const save = async () => {
-			const path = join(this.rootDir, REGISTRY);
-			await this.assertManagedPath(this.rootDir, { kind: "directory" });
-			await this.assertManagedPath(path, { allowMissing: true, kind: "file" });
-			const temporary = `${path}.${randomUUID()}.tmp`;
-			await writeFile(temporary, `${JSON.stringify(this.registry, null, 2)}\n`, { mode: 0o600, flag: "wx" });
-			await this.assertManagedPath(temporary, { kind: "file" });
-			await rename(temporary, path);
-			await this.assertManagedPath(path, { kind: "file" });
-		};
-		this.writeChain = this.writeChain.then(save);
-		return this.writeChain;
+	/** Import records from the pre-SQLite plugins.json once, keeping the file as plugins.json.imported. */
+	private async importLegacyRegistry(): Promise<void> {
+		const registryPath = join(this.rootDir, LEGACY_REGISTRY);
+		await this.assertManagedPath(registryPath, { allowMissing: true, kind: "file" });
+		let value: unknown;
+		try {
+			value = JSON.parse(await readFile(registryPath, "utf8"));
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.loadError = `could not read plugin registry: ${shortError(error)}`;
+			return;
+		}
+		if (!Value.Check(LegacyRegistrySchema, value)) {
+			this.loadError = "plugin registry has an invalid format";
+			return;
+		}
+		for (const [name, record] of Object.entries(value.plugins)) {
+			try {
+				if (!SLUG.test(name) || !Value.Check(LegacyRecordSchema, record)) throw new Error("invalid plugin record");
+				parseManifest(record);
+				if (record.name !== name) throw new Error("plugin record name does not match its key");
+				if (!VERSION.test(record.version)) throw new Error("invalid plugin version");
+				if (!record.history.every((item) => VERSION.test(item))) throw new Error("invalid plugin history");
+				if (!this.find(name)) this.save(record);
+			} catch (error) {
+				this.malformedRecords.push({ name: SLUG.test(name) ? name : "_invalid", description: "Malformed plugin record", status: "error", error: shortError(error) });
+			}
+		}
+		await rename(registryPath, `${registryPath}.imported`);
+	}
+
+	private find(name: string): PluginRecord | undefined {
+		const row = this.db.prepare("SELECT * FROM plugins WHERE name = ?").get(name) as PluginRow | undefined;
+		return row ? toRecord(row) : undefined;
+	}
+
+	private save(record: PluginRecord): void {
+		this.db.prepare(`INSERT INTO plugins (name, description, instructions, entry, version, history_json, enabled, last_error)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(name) DO UPDATE SET description = excluded.description, instructions = excluded.instructions, entry = excluded.entry,
+				version = excluded.version, history_json = excluded.history_json, enabled = excluded.enabled, last_error = excluded.last_error`)
+			.run(record.name, record.description, record.instructions ?? null, record.entry, record.version,
+				JSON.stringify(record.history), record.enabled ? 1 : 0, record.lastError ?? null);
 	}
 
 	private async assertManagedPath(
@@ -207,7 +221,7 @@ export class PluginManager {
 		options: { allowMissing?: boolean; kind?: "file" | "directory" } = {},
 	): Promise<void> {
 		const candidate = resolve(path);
-		if (!inside(this.rootDir, candidate)) throw new Error(`plugin storage path escapes its root: ${path}`);
+		if (!isWithin(this.rootDir, candidate)) throw new Error(`plugin storage path escapes its root: ${path}`);
 		const canonicalRoot = this.realRootDir ?? await realpath(this.rootDir);
 		let current = this.rootDir;
 		if (candidate !== this.rootDir) {
@@ -224,7 +238,7 @@ export class PluginManager {
 			}
 		}
 		const actual = await realpath(candidate);
-		if (!inside(canonicalRoot, actual)) throw new Error(`plugin storage path resolves outside its root: ${path}`);
+		if (!isWithin(canonicalRoot, actual)) throw new Error(`plugin storage path resolves outside its root: ${path}`);
 		const info = await lstat(candidate);
 		if (options.kind === "file" && !info.isFile()) throw new Error(`plugin storage file is invalid: ${path}`);
 		if (options.kind === "directory" && !info.isDirectory()) throw new Error(`plugin storage directory is invalid: ${path}`);
@@ -233,7 +247,7 @@ export class PluginManager {
 	private async sourceDirectory(sourceRelativePath: string): Promise<string> {
 		if (isAbsolute(sourceRelativePath)) throw new Error("plugin source path must be relative to tenant workspaces");
 		const source = resolve(this.workspacesDir, sourceRelativePath);
-		if (!inside(this.workspacesDir, source)) throw new Error("plugin source path escapes tenant workspaces");
+		if (!isWithin(this.workspacesDir, source)) throw new Error("plugin source path escapes tenant workspaces");
 		if ((await lstat(this.workspacesDir)).isSymbolicLink()) throw new Error("tenant workspaces directory cannot be a symbolic link");
 		const realRoot = await realpath(this.workspacesDir);
 		let current = this.workspacesDir;
@@ -244,7 +258,7 @@ export class PluginManager {
 		await assertNoSymlinks(source);
 		const info = await lstat(source);
 		if (!info.isDirectory()) throw new Error("plugin source must be a directory");
-		if (!inside(realRoot, await realpath(source))) throw new Error("plugin source resolves outside tenant workspaces");
+		if (!isWithin(realRoot, await realpath(source))) throw new Error("plugin source resolves outside tenant workspaces");
 		return source;
 	}
 
@@ -260,7 +274,7 @@ export class PluginManager {
 			await copyTreeBounded(source, staging, { files: 0, bytes: 0 });
 			manifest = parseManifest(JSON.parse(await readFile(join(staging, "plugin.json"), "utf8")));
 			const entryPath = resolve(staging, manifest.entry);
-			if (!inside(staging, entryPath)) throw new Error("plugin entry escapes the plugin directory");
+			if (!isWithin(staging, entryPath)) throw new Error("plugin entry escapes the plugin directory");
 			await assertNoSymlinks(entryPath);
 			if (!(await lstat(entryPath)).isFile()) throw new Error("plugin entry must be a file");
 			await assertNoSymlinks(staging);
@@ -271,7 +285,7 @@ export class PluginManager {
 		}
 		const snapshotsRoot = join(this.rootDir, "snapshots");
 		const snapshotDir = join(snapshotsRoot, manifest.name, version);
-		if (!inside(snapshotsRoot, snapshotDir)) throw new Error("invalid plugin snapshot path");
+		if (!isWithin(snapshotsRoot, snapshotDir)) throw new Error("invalid plugin snapshot path");
 		await this.assertManagedPath(join(snapshotsRoot, manifest.name), { allowMissing: true });
 		await this.assertManagedPath(snapshotDir, { allowMissing: true });
 		await mkdir(dirname(snapshotDir), { recursive: true, mode: 0o700 });
@@ -282,29 +296,31 @@ export class PluginManager {
 		}
 		else await rename(staging, snapshotDir);
 		await this.assertManagedPath(snapshotDir, { kind: "directory" });
-		const previous = this.registry.plugins[manifest.name];
+		const previous = this.find(manifest.name);
 		const sameVersion = previous?.version === version;
-		this.registry.plugins[manifest.name] = {
+		const record: PluginRecord = {
 			...manifest,
 			version,
 			history: previous ? sameVersion ? previous.history : [...previous.history, previous.version].filter((value, index, all) => all.indexOf(value) === index) : [],
 			enabled: this.disabled ? false : sameVersion ? previous.enabled : true,
 			...(sameVersion && previous.lastError ? { lastError: previous.lastError } : {}),
 		};
-		await this.persist();
-		return this.toInfo(this.registry.plugins[manifest.name]);
+		this.save(record);
+		return this.toInfo(record);
 	}
 
 	async list(): Promise<PluginInfo[]> {
 		await this.ready();
-		const installed = Object.values(this.registry.plugins).map((record) => this.toInfo(record));
+		const rows = this.db.prepare("SELECT * FROM plugins").all() as unknown as PluginRow[];
+		const installed = rows.map((row) => this.toInfo(toRecord(row)));
+		const names = new Set(rows.map((row) => row.name));
 		installed.push(...this.malformedRecords);
 		if (this.loadError) installed.push({ name: "_registry", description: "Plugin registry", status: "error", error: this.loadError });
 		// Surface malformed capability folders without allowing them to prevent manager startup.
 		const capabilityRoot = join(this.workspacesDir, "capabilities");
 		try {
 			for (const name of await readdir(capabilityRoot)) {
-				if (this.registry.plugins[name]) continue;
+				if (names.has(name)) continue;
 				try {
 					const source = await this.sourceDirectory(join("capabilities", name));
 					parseManifest(JSON.parse(await readFile(join(source, "plugin.json"), "utf8")));
@@ -322,7 +338,7 @@ export class PluginManager {
 		await this.ready();
 		const record = this.get(name);
 		record.enabled = false;
-		await this.persist();
+		this.save(record);
 		return this.toInfo(record);
 	}
 
@@ -333,7 +349,7 @@ export class PluginManager {
 		await this.validateSnapshot(record);
 		record.enabled = true;
 		delete record.lastError;
-		await this.persist();
+		this.save(record);
 		return this.toInfo(record);
 	}
 
@@ -352,7 +368,7 @@ export class PluginManager {
 		record.version = previous;
 		record.history = record.history.slice(0, -1).concat(old);
 		delete record.lastError;
-		await this.persist();
+		this.save(record);
 		return this.toInfo(record);
 	}
 
@@ -381,14 +397,14 @@ export class PluginManager {
 			if (signal?.aborted) throw error;
 			record.enabled = false;
 			record.lastError = shortError(error);
-			await this.persist();
+			this.save(record);
 			throw new Error(`plugin ${name} failed and was disabled: ${record.lastError}`);
 		}
 	}
 
 	private get(name: string): PluginRecord {
 		if (!SLUG.test(name)) throw new Error(`invalid plugin name: ${name}`);
-		const record = this.registry.plugins[name];
+		const record = this.find(name);
 		if (!record) throw new Error(`plugin not installed: ${name}`);
 		return record;
 	}
@@ -397,13 +413,13 @@ export class PluginManager {
 		if (!SLUG.test(record.name) || typeof record.version !== "string" || !VERSION.test(record.version)) throw new Error("invalid plugin snapshot version");
 		const root = join(this.rootDir, "snapshots");
 		const path = resolve(root, record.name, record.version);
-		if (!inside(root, path)) throw new Error("invalid plugin snapshot path");
+		if (!isWithin(root, path)) throw new Error("invalid plugin snapshot path");
 		await this.assertManagedPath(path, { kind: "directory" });
 		await assertNoSymlinks(path);
 		const manifest = parseManifest(JSON.parse(await readFile(join(path, "plugin.json"), "utf8")));
 		if (manifest.name !== record.name) throw new Error("plugin snapshot name does not match its record");
 		const entry = resolve(path, manifest.entry);
-		if (!inside(path, entry) || !(await lstat(entry)).isFile()) throw new Error("plugin snapshot entry is missing or invalid");
+		if (!isWithin(path, entry) || !(await lstat(entry)).isFile()) throw new Error("plugin snapshot entry is missing or invalid");
 		return { directory: path, manifest };
 	}
 

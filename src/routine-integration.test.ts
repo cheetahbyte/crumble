@@ -7,12 +7,15 @@ import { AssistantState } from "./state.ts";
 import { InboxProcessor } from "./inbox.ts";
 import { LearningStore } from "./learning.ts";
 import { delegateExtension } from "./extensions/delegate.ts";
+import { openDatabase } from "./db/database.ts";
 
 test("quiet routine results remain searchable while ordinary replies cannot be suppressed", async () => {
 	const root = mkdtempSync(join(tmpdir(), "crumble-routine-integration-"));
 	const path = join(root, "assistant.db");
-	const state = new AssistantState(path);
-	const learning = new LearningStore(path);
+	const stateDb = openDatabase(path, "assistant");
+	const state = new AssistantState(stateDb);
+	const learningDb = openDatabase(path, "assistant");
+	const learning = new LearningStore(learningDb);
 	const inbox = new InboxProcessor({ state, changed() {}, handle: async () => ({ text: "Checked inventory: unchanged", notify: false }) });
 	try {
 		state.createSchedule({ id: "monitor", label: "Inventory", prompt: "Check inventory", source: "discord", dueAt: 1, notificationPolicy: "changes_only" });
@@ -25,7 +28,7 @@ test("quiet routine results remain searchable while ordinary replies cannot be s
 		await inbox.wake();
 		assert.deepEqual(state.pendingDeliveries().map((d) => d.id), ["direct"]);
 	} finally {
-		await inbox.close(); learning.close(); state.close(); rmSync(root, { recursive: true, force: true });
+		await inbox.close(); learningDb.close(); stateDb.close(); rmSync(root, { recursive: true, force: true });
 	}
 });
 

@@ -1,5 +1,6 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { rejectSymlink, SLUG, validateTimezone } from "./paths.ts";
 
 export interface TenantInput {
 	id: string;
@@ -43,21 +44,11 @@ export function tenantEnvironment(
 	return env;
 }
 
-const TENANT_ID = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 const DISCORD_ID = /^\d{17,20}$/;
 
 export function validateTenantId(id: string): string {
-	if (!TENANT_ID.test(id)) throw new Error(`Invalid tenant id ${JSON.stringify(id)}: use a lowercase slug`);
+	if (!SLUG.test(id)) throw new Error(`Invalid tenant id ${JSON.stringify(id)}: use a lowercase slug`);
 	return id;
-}
-
-export function validateTimezone(timezone: string): string {
-	try {
-		new Intl.DateTimeFormat("en-US", { timeZone: timezone });
-	} catch {
-		throw new Error(`Invalid timezone ${JSON.stringify(timezone)}: expected an IANA timezone`);
-	}
-	return timezone;
 }
 
 export function createTenantConfig(dataDir: string, input: TenantInput, defaults: TenantDefaults): TenantConfig {
@@ -120,19 +111,11 @@ export function prepareTenant(tenant: TenantConfig): void {
 		join(tenant.agentDir, "models.json"),
 		join(tenant.agentDir, "models-cache.json"),
 	]) {
-		assertNotSymlink(path, "Tenant file");
+		rejectSymlink(path, `Tenant file ${path}`);
 	}
 }
 
 function assertDirectory(path: string, label: string): void {
 	const stat = lstatSync(path);
 	if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error(`${label} must be a real directory: ${path}`);
-}
-
-function assertNotSymlink(path: string, label: string): void {
-	try {
-		if (lstatSync(path).isSymbolicLink()) throw new Error(`${label} must not be a symbolic link: ${path}`);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
 }

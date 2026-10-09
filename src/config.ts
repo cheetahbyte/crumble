@@ -10,18 +10,15 @@ const root = resolve(import.meta.dirname, "..");
 export interface AppConfig {
 	configPath: string;
 	dataDir: string;
-	jobsDir: string;
-	workspacesDir: string;
 	provider: string;
 	model: string;
 	sandboxImage: string;
-	askExtension: string;
 	runnerKind: "sandbox" | "host";
 	selectedTenantId: string;
 	tenants: TenantConfig[];
 }
 
-export type RuntimeConfig = Pick<AppConfig, "runnerKind" | "sandboxImage" | "askExtension">;
+export type RuntimeConfig = Pick<AppConfig, "runnerKind" | "sandboxImage">;
 
 const RawTenantSchema = Type.Object({
 	id: Type.String(),
@@ -109,36 +106,16 @@ export function loadAppConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 	return {
 		configPath,
 		dataDir: dataRoot,
-		jobsDir: tenants.find((tenant) => tenant.id === selectedTenantId)!.jobsDir,
-		workspacesDir: tenants.find((tenant) => tenant.id === selectedTenantId)!.workspacesDir,
 		provider,
 		model,
 		sandboxImage: raw.sandboxImage ?? "crumble-sandbox",
-		askExtension: join(root, "src", "worker", "ask.ts"),
 		runnerKind,
 		selectedTenantId,
 		tenants,
 	};
 }
 
-/** Create one tenant's worker runner. Zero-argument use stays for local scripts. */
-export function createRunner(tenant?: TenantConfig, runtime?: RuntimeConfig): WorkerRunner {
-	const fullConfig = runtime ? undefined : loadAppConfig();
-	const app = runtime ?? fullConfig;
-	const selected = tenant ?? fullConfig?.tenants.find((candidate) => candidate.id === fullConfig.selectedTenantId);
-	if (!selected) throw new Error("No tenant is configured");
-	if (!app) throw new Error("Runtime configuration is required when passing a tenant directly");
-	const dirs = {
-		tenantId: selected.id,
-		rootDir: selected.rootDir,
-		homeDir: selected.homeDir,
-		jobsDir: selected.jobsDir,
-		workspacesDir: selected.workspacesDir,
-		agentDir: selected.agentDir,
-	};
-	if (app.runnerKind === "host") return hostRunner(dirs);
-	return sandboxRunner(dirs, {
-		image: app.sandboxImage,
-		sandboxExtension: join(root, "src", "worker", "sandbox.ts"),
-	});
+/** Create one tenant's worker runner. */
+export function createRunner(tenant: TenantConfig, runtime: RuntimeConfig): WorkerRunner {
+	return runtime.runnerKind === "host" ? hostRunner(tenant) : sandboxRunner(tenant, runtime.sandboxImage);
 }

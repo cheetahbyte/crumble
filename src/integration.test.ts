@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { AssistantState } from "./state.ts";
+import { openDatabase } from "./db/database.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const mainPath = join(repoRoot, "src", "main.ts");
@@ -107,14 +108,18 @@ test("headless service persists tenant outboxes, enforces singleton, and release
 	const bobPath = join(dataDir, "tenants", "bob", "assistant.db");
 	mkdirSync(dirname(alicePath), { recursive: true });
 	mkdirSync(dirname(bobPath), { recursive: true });
-	const aliceSeed = new AssistantState(alicePath);
+	const aliceSeedDb = openDatabase(alicePath, "assistant");
+	const aliceSeed = new AssistantState(aliceSeedDb);
 	aliceSeed.enqueue({ id: "internal:alice-help", text: "/jobs", source: "internal" });
-	aliceSeed.close();
-	const bobSeed = new AssistantState(bobPath);
+	aliceSeedDb.close();
+	const bobSeedDb = openDatabase(bobPath, "assistant");
+	const bobSeed = new AssistantState(bobSeedDb);
 	bobSeed.enqueue({ id: "internal:bob-help", text: "/jobs", source: "internal" });
-	bobSeed.close();
-	const alice = new AssistantState(alicePath);
-	const bob = new AssistantState(bobPath);
+	bobSeedDb.close();
+	const aliceDb = openDatabase(alicePath, "assistant");
+	const alice = new AssistantState(aliceDb);
+	const bobDb = openDatabase(bobPath, "assistant");
+	const bob = new AssistantState(bobDb);
 	let crumble: RunningCrumble | undefined;
 	try {
 		crumble = startCrumble(configPath);
@@ -138,8 +143,8 @@ test("headless service persists tenant outboxes, enforces singleton, and release
 		assert.equal(bob.pendingDeliveries().length, 1);
 	} finally {
 		await crumble?.stop();
-		alice.close();
-		bob.close();
+		aliceDb.close();
+		bobDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -149,31 +154,34 @@ test("headless restart recovers interrupted work without replaying or acknowledg
 	const { configPath, dataDir } = createConfig(directory);
 	const aliceStatePath = join(dataDir, "tenants", "alice", "assistant.db");
 	mkdirSync(dirname(aliceStatePath), { recursive: true });
-	const aliceSeed = new AssistantState(aliceStatePath);
+	const aliceSeedDb = openDatabase(aliceStatePath, "assistant");
+	const aliceSeed = new AssistantState(aliceSeedDb);
 	aliceSeed.enqueue({ id: "terminal:interrupted-before-boot", text: "DO_NOT_SEND_TO_A_MODEL", source: "terminal" });
 	aliceSeed.markProcessing("terminal:interrupted-before-boot");
-	aliceSeed.close();
+	aliceSeedDb.close();
 	let crumble: RunningCrumble | undefined;
 	try {
 		crumble = startCrumble(configPath);
 		await crumble.waitFor("Crumble service ready for 2 tenants");
 		await waitUntil(() => {
-			const state = new AssistantState(aliceStatePath);
+			const stateDb = openDatabase(aliceStatePath, "assistant");
+			const state = new AssistantState(stateDb);
 			try { return state.get("terminal:interrupted-before-boot")?.status === "failed"; }
-			finally { state.close(); }
+			finally { stateDb.close(); }
 		});
 		assert.doesNotMatch(crumble.output(), /DO_NOT_SEND_TO_A_MODEL|Request was interrupted/);
 		await crumble.stop();
 		crumble = undefined;
 
-		const recovered = new AssistantState(aliceStatePath);
+		const recoveredDb = openDatabase(aliceStatePath, "assistant");
+		const recovered = new AssistantState(recoveredDb);
 		try {
 			assert.equal(recovered.get("terminal:interrupted-before-boot")?.status, "failed");
 			assert.deepEqual(recovered.pendingDeliveries().map(({ id, source }) => ({ id, source })), [
 				{ id: "terminal:interrupted-before-boot", source: "terminal" },
 			]);
 			assert.equal(recovered.pendingDeliveries()[0]?.response, INTERRUPTED_REPLY);
-		} finally { recovered.close(); }
+		} finally { recoveredDb.close(); }
 	} finally {
 		await crumble?.stop();
 		rmSync(directory, { recursive: true, force: true });

@@ -1,8 +1,10 @@
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { BrowserManager } from "./browser.ts";
 import { LearningStore } from "./learning.ts";
 import { TenantAssistant } from "./assistant.ts";
 import { createRunner } from "./config.ts";
+import { openDatabase } from "./db/database.ts";
 import { describeJob } from "./extensions/delegate.ts";
 import { InboxProcessor } from "./inbox.ts";
 import { JobStore } from "./jobs.ts";
@@ -11,6 +13,7 @@ import type { ParentMessage, TenantMessage } from "./protocol.ts";
 import { AssistantState } from "./state.ts";
 import { Supervisor } from "./supervisor.ts";
 
+let db: DatabaseSync | undefined;
 let state: AssistantState | undefined;
 let jobs: JobStore | undefined;
 let learning: LearningStore | undefined;
@@ -50,9 +53,8 @@ async function shutdown(): Promise<void> {
 	await assistant?.close();
 	await inbox?.close();
 	await supervisor?.close();
-	learning?.close();
 	jobs?.close();
-	state?.close();
+	db?.close();
 	process.disconnect?.();
 	// Pi's process-wide services can retain handles after a session is disposed.
 	// All durable work and child workers have been closed above.
@@ -63,23 +65,24 @@ process.on("message", (message: ParentMessage) => {
 	if (message.type === "wake") { wake(); return; }
 	if (message.type === "interrupt") { void assistant?.abort().catch(() => {}); return; }
 	if (message.type === "stop") { void shutdown(); return; }
-	if (message.type !== "init" || state) return;
+	if (message.type !== "init" || db) return;
 	try {
 		const { tenant, app, pluginsDisabled } = message;
-		state = new AssistantState(tenant.stateDatabasePath);
+		db = openDatabase(tenant.stateDatabasePath, "assistant");
+		state = new AssistantState(db);
 		state.recoverInterrupted();
+		learning = new LearningStore(db);
 		jobs = new JobStore(tenant.jobsDatabasePath);
 		supervisor = new Supervisor({
-			store: jobs, runner: createRunner(tenant, app), askExtension: app.askExtension,
+			store: jobs, runner: createRunner(tenant, app),
 			provider: tenant.provider, model: tenant.model, onSettled: () => wake(),
 		});
 		supervisor.recoverInterrupted();
-		learning = new LearningStore(tenant.stateDatabasePath);
 		assistant = new TenantAssistant({
 			tenant, state, jobs, supervisor, learning,
 			browser: new BrowserManager({ tenantId: tenant.id, rootDir: tenant.rootDir }),
 			plugins: new PluginManager({
-				rootDir: join(tenant.rootDir, "plugins"), workspacesDir: tenant.workspacesDir,
+				db, rootDir: join(tenant.rootDir, "plugins"), workspacesDir: tenant.workspacesDir,
 				tenantId: tenant.id, image: app.sandboxImage, disabled: pluginsDisabled,
 			}),
 		});

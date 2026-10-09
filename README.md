@@ -88,6 +88,10 @@ Each tenant can set its own `provider`, `model`, and IANA `timezone`. Top-level 
 
 Use the `sandbox` runner when you configure more than one tenant. The `host` runner runs worker tools directly on the machine and is limited to one tenant.
 
+Each tenant's sandboxes share one persistent home directory, stored on the host at `DATA_DIR/tenants/TENANT_ID/sandbox-home` and mounted at `/root`. Tools installed there (`npm install -g`, `pip install --user`, or binaries in `~/.local/bin`) and logins stored there survive container restarts and are available in every project. Everything else in a container outside `~` and `/workspace` is reset when Crumble recreates it. Anything that runs in the sandbox can read this directory, including stored tokens, so use credentials you can revoke.
+
+To let workers use Claude Code, ask Crumble to install it (`npm install -g @anthropic-ai/claude-code`). Then sign in once from a running sandbox container of that tenant: find it with `docker ps --filter name=crumble-sandbox-TENANT_ID`, run `docker exec -it CONTAINER_NAME claude`, and complete the login. The login is stored in the shared home directory.
+
 ## Use Crumble
 
 Send a request in a Discord direct message. Crumble handles ordinary conversation and delegates work that needs research, code, files, shell commands, or a new capability.
@@ -162,7 +166,7 @@ The plugin system currently covers executable tools and instructions. It does no
 
 Pi's SDK maintains a persistent assistant session for each tenant and restores its conversation on restart. Worker jobs also resume their own saved Pi sessions when explicitly continued. The service owns these sessions; no separate interactive agent needs to stay open.
 
-Crumble stores each tenant's memory, inbox, outbox, and schedules in SQLite. It also stores worker jobs and completion notifications in SQLite. This lets it deliver queued responses and job updates after a temporary channel outage.
+Crumble stores each tenant's memory, inbox, outbox, schedules, and plugin registry in SQLite. Plugin code snapshots and plugin data stay on disk under the tenant's `plugins` directory; an existing `plugins.json` registry is imported once and kept as `plugins.json.imported`. It also stores worker jobs and completion notifications in SQLite. This lets it deliver queued responses and job updates after a temporary channel outage.
 
 Discord delivery is retried until acknowledged locally. If the process fails between a successful send and its acknowledgment, or after sending part of a long reply, a retry can duplicate messages. This is not exactly-once delivery.
 

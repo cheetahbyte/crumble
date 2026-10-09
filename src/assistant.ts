@@ -129,9 +129,9 @@ export class TenantAssistant {
 			noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
 			systemPrompt: PROMPT,
 			extensionFactories: [
-				delegateExtension(supervisor, jobs, tenant.workspacesDir, () => memoryContext(state),
+				delegateExtension(supervisor, jobs, tenant.workspacesDir, () => memoryContext(learning),
 					() => !this.currentRequest?.scheduleId || state.getSchedule(this.currentRequest.scheduleId)?.notificationPolicy !== "changes_only"),
-				assistantExtension({ tenant, state, plugins, currentSource: () => this.source }),
+				assistantExtension({ tenant, learning, plugins, currentSource: () => this.source }),
 				learningExtension(learning, { currentRequest: () => this.currentRequest }),
 				browserExtension(browser),
 				routineExtension({ state, timezone: tenant.timezone, currentRequest: () => this.currentRequest,
@@ -165,14 +165,14 @@ export class TenantAssistant {
 			case "/learning":
 				if (argument === "on" || argument === "off") learning.setLearningEnabled(argument === "on");
 				return `Automatic learning is ${learning.learningEnabled() ? "on" : "off"}.`;
-			case "/memories": return JSON.stringify(state.listMemory(), null, 2);
+			case "/memories": return JSON.stringify(learning.listMemory(), null, 2);
 			case "/memory": {
 				const key = text.trim().split(/\s+/).slice(2).join(" ");
 				if (!key) return "Usage: /memory show|history|rollback|forget <key>";
-				if (argument === "show") return JSON.stringify(state.getMemory(key) ?? "No such memory.", null, 2);
-				if (argument === "history") return JSON.stringify(state.memoryHistory(key), null, 2);
-				if (argument === "rollback") return state.rollbackMemory(key) ? "Memory rolled back." : "No earlier memory version.";
-				if (argument === "forget") return state.deleteMemory(key) ? "Forgotten." : "No such memory.";
+				if (argument === "show") return JSON.stringify(learning.getMemory(key) ?? "No such memory.", null, 2);
+				if (argument === "history") return JSON.stringify(learning.memoryHistory(key), null, 2);
+				if (argument === "rollback") return learning.rollbackMemory(key) ? "Memory rolled back." : "No earlier memory version.";
+				if (argument === "forget") return learning.deleteMemory(key) ? "Forgotten." : "No such memory.";
 				return "Usage: /memory show|history|rollback|forget <key>";
 			}
 			case "/history": {

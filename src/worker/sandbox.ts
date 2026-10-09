@@ -210,6 +210,8 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("before_agent_start", async (event) => {
 		event.systemPromptOptions.cwd = CONTAINER_CWD;
-		event.systemPromptOptions.sections.sandbox = "File and shell tools run inside a Linux sandbox container.";
+		event.systemPromptOptions.sections.sandbox = "File and shell tools run inside a Linux sandbox container. " +
+			"Your home directory (~) persists across jobs and projects: install tools there (npm install -g, pip install --user, or binaries in ~/.local/bin) and they stay available. Logins stored in ~ persist too. " +
+			"Everything outside ~ and /workspace can be reset at any time. Check for already installed tools, such as claude, before installing.";
 	});
 }

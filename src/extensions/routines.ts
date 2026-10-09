@@ -1,10 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { AssistantState, InboundRequest, ScheduleUpdate } from "../state.ts";
-
-function result(value: unknown) {
-	return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], details: undefined };
-}
+import { toolResult } from "./result.ts";
 
 export function routineExtension(options: {
 	state: AssistantState;
@@ -39,7 +36,7 @@ export function routineExtension(options: {
 				timezone: Type.Optional(Type.String()),
 				notification_policy: Type.Optional(Type.Union([Type.Literal("always"), Type.Literal("changes_only")])),
 			}),
-			execute: async (_id, p) => result(state.createSchedule({
+			execute: async (_id, p) => toolResult(state.createSchedule({
 				label: p.label,
 				prompt: p.prompt,
 				dueAt: p.due_at,
@@ -55,14 +52,14 @@ export function routineExtension(options: {
 			name: "list_schedules", label: "List routines",
 			description: "List saved routines, their next run, timezone, notification policy, pause state, and latest result.",
 			parameters: Type.Object({}),
-			execute: async () => result(state.listSchedules()),
+			execute: async () => toolResult(state.listSchedules()),
 		});
 
 		pi.registerTool({
 			name: "cancel_schedule", label: "Cancel routine",
 			description: "Disable a saved routine so it will not run again. An already queued run is unaffected.",
 			parameters: Type.Object({ id: Type.String() }),
-			execute: async (_id, p) => result(state.cancelSchedule(p.id) ? "Routine cancelled." : "No active routine with that ID."),
+			execute: async (_id, p) => toolResult(state.cancelSchedule(p.id) ? "Routine cancelled." : "No active routine with that ID."),
 		});
 
 		pi.registerTool({
@@ -80,9 +77,9 @@ export function routineExtension(options: {
 				notification_policy: Type.Optional(Type.Union([Type.Literal("always"), Type.Literal("changes_only")])),
 			}),
 			execute: async (_id, p) => {
-				if (p.action === "pause") return result(state.pauseSchedule(p.id) ? "Routine paused." : "Routine was not active or was already paused.");
-				if (p.action === "resume") return result(state.resumeSchedule(p.id) ? "Routine resumed." : "Routine was not active or was already running.");
-				if (p.action === "run_now") return result(state.runScheduleNow(p.id) ? "Routine queued to run now." : "Routine is unavailable or already queued/running.");
+				if (p.action === "pause") return toolResult(state.pauseSchedule(p.id) ? "Routine paused." : "Routine was not active or was already paused.");
+				if (p.action === "resume") return toolResult(state.resumeSchedule(p.id) ? "Routine resumed." : "Routine was not active or was already running.");
+				if (p.action === "run_now") return toolResult(state.runScheduleNow(p.id) ? "Routine queued to run now." : "Routine is unavailable or already queued/running.");
 				const update: ScheduleUpdate = {
 					label: p.label,
 					prompt: p.prompt,
@@ -94,7 +91,7 @@ export function routineExtension(options: {
 				if (p.repeat_every_minutes !== undefined) update.intervalMs = p.repeat_every_minutes * 60_000;
 				if (p.cron !== undefined && p.repeat_every_minutes === undefined) update.intervalMs = null;
 				if (p.repeat_every_minutes !== undefined && p.cron === undefined) update.cron = null;
-				return result(state.updateSchedule(p.id, update) ?? "No active routine with that ID.");
+				return toolResult(state.updateSchedule(p.id, update) ?? "No active routine with that ID.");
 			},
 		});
 
@@ -108,7 +105,7 @@ export function routineExtension(options: {
 				if (!schedule) throw new Error("report_routine_result is only available during a scheduled routine run.");
 				const quietable = schedule.notificationPolicy === "changes_only";
 				setOutcome({ text: p.text, notify: quietable ? p.changed : true });
-				return result(quietable && !p.changed ? "Routine result saved; no notification will be sent." : "Routine result saved for delivery.");
+				return toolResult(quietable && !p.changed ? "Routine result saved; no notification will be sent." : "Routine result saved for delivery.");
 			},
 		});
 	};

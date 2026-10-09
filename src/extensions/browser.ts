@@ -1,10 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { BrowserManager } from "../browser.ts";
-
-function result(value: unknown) {
-	return { content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], details: undefined };
-}
+import { toolResult } from "./result.ts";
 
 const locatorSchema = Type.Union([
 	Type.Object({ by: Type.Literal("role"), role: Type.String({ maxLength: 80 }), name: Type.Optional(Type.String({ maxLength: 256 })), exact: Type.Optional(Type.Boolean()) }),
@@ -44,19 +41,19 @@ export function browserExtension(manager: BrowserManager): ExtensionFactory {
 				}
 				if (params.action === "navigate") {
 					if (!params.url) throw new Error("url is required for navigate");
-					return result(await manager.act({ action: "navigate", url: params.url }, signal));
+					return toolResult(await manager.act({ action: "navigate", url: params.url }, signal));
 				}
 				if (params.action === "click" || params.action === "fill" || params.action === "press") {
 					if (!params.locator) throw new Error(`locator is required for ${params.action}`);
-					if (params.action === "click") return result(await manager.act({ action: "click", locator: params.locator }, signal));
+					if (params.action === "click") return toolResult(await manager.act({ action: "click", locator: params.locator }, signal));
 					if (params.action === "fill") {
 						if (params.value === undefined) throw new Error("value is required for fill");
-						return result(await manager.act({ action: "fill", locator: params.locator, value: params.value }, signal));
+						return toolResult(await manager.act({ action: "fill", locator: params.locator, value: params.value }, signal));
 					}
 					if (!params.key) throw new Error("key is required for press");
-					return result(await manager.act({ action: "press", locator: params.locator, key: params.key }, signal));
+					return toolResult(await manager.act({ action: "press", locator: params.locator, key: params.key }, signal));
 				}
-				return result(await manager.act({ action: params.action }, signal));
+				return toolResult(await manager.act({ action: params.action }, signal));
 			},
 		});
 	};

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { openDatabase } from "./db/database.ts";
+import { openDatabase, transaction } from "./db/database.ts";
 import type { jobNotifications, jobs } from "./db/jobs-schema.ts";
 
 export type JobStatus = "running" | "waiting" | "done" | "failed" | "interrupted" | "cancelled";
@@ -82,8 +82,7 @@ export class JobStore {
 		const current = this.require(id);
 		const now = Date.now();
 		const next = { ...current, ...patch, updatedAt: now };
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
+		transaction(this.db, () => {
 			this.db
 				.prepare("UPDATE jobs SET status = ?, question = ?, summary = ?, error = ?, updated_at = ? WHERE id = ?")
 				.run(next.status, next.question, next.summary, next.error, now, id);
@@ -95,11 +94,7 @@ export class JobStore {
 					.prepare("INSERT INTO job_notifications (job_id, version, job_json) VALUES (?, ?, ?)")
 					.run(id, version, JSON.stringify(next));
 			}
-			this.db.exec("COMMIT");
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
+		});
 		return next;
 	}
 

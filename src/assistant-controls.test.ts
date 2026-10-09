@@ -7,11 +7,14 @@ import { TenantAssistant } from "./assistant.ts";
 import { AssistantState } from "./state.ts";
 import { LearningStore } from "./learning.ts";
 import { createTenantConfig } from "./tenants.ts";
+import { openDatabase } from "./db/database.ts";
 
 test("learned skill controls stay usable without a model, including missing revisions", async () => {
 	const root = mkdtempSync(join(tmpdir(), "crumble-controls-"));
-	const state = new AssistantState(join(root, "assistant.db"));
-	const learning = new LearningStore(join(root, "assistant.db"));
+	const stateDb = openDatabase(join(root, "assistant.db"), "assistant");
+	const state = new AssistantState(stateDb);
+	const learningDb = openDatabase(join(root, "assistant.db"), "assistant");
+	const learning = new LearningStore(learningDb);
 	const assistant = new TenantAssistant({
 		tenant: createTenantConfig(root, { id: "test" }, { provider: "missing", model: "missing" }),
 		state, learning, jobs: {} as never, plugins: {} as never, supervisor: {} as never,
@@ -25,8 +28,8 @@ test("learned skill controls stay usable without a model, including missing revi
 	};
 	try {
 		assert.equal(await command("/skill rollback absent"), '"No earlier version available."');
-		state.setMemory("style", "brief");
-		state.setMemory("style", "detailed");
+		learning.setMemory("style", "brief");
+		learning.setMemory("style", "detailed");
 		assert.equal(await command("/memory rollback style"), "Memory rolled back.");
 		assert.equal(await command("/memory show style"), '"brief"');
 		assert.equal(await command("/memory forget style"), "Forgotten.");
@@ -38,6 +41,6 @@ test("learned skill controls stay usable without a model, including missing revi
 		assert.match(String(await command("/skill show release checklist")), /Check the release/);
 		assert.equal(await command("/skill enable release checklist"), "Enabled release checklist.");
 	} finally {
-		await assistant.close(); learning.close(); state.close(); rmSync(root, { recursive: true, force: true });
+		await assistant.close(); learningDb.close(); stateDb.close(); rmSync(root, { recursive: true, force: true });
 	}
 });

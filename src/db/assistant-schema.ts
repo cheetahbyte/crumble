@@ -153,3 +153,19 @@ export const learningDeletedSkills = sqliteTable("learning_deleted_skills", {
 	name: text("name").primaryKey(),
 	deleted_at: integer("deleted_at").notNull(),
 });
+
+/** Installed plugin capabilities. Snapshots stay on disk; this is the registry pointing at them. */
+export const plugins = sqliteTable(
+	"plugins",
+	{
+		name: text("name").primaryKey(),
+		description: text("description").notNull(),
+		instructions: text("instructions"),
+		entry: text("entry").notNull(),
+		version: text("version").notNull(),
+		history_json: text("history_json").notNull(),
+		enabled: integer("enabled").notNull(),
+		last_error: text("last_error"),
+	},
+	(table) => [check("plugins_enabled", sql`${table.enabled} IN (0, 1)`)],
+);

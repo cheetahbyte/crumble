@@ -82,3 +82,16 @@ export function openDatabase(path: string, kind: DatabaseKind): DatabaseSync {
 		throw error;
 	}
 }
+
+/** Run fn in an immediate write transaction; roll back if it throws. */
+export function transaction<T>(db: DatabaseSync, fn: () => T): T {
+	db.exec("BEGIN IMMEDIATE");
+	try {
+		const result = fn();
+		db.exec("COMMIT");
+		return result;
+	} catch (error) {
+		db.exec("ROLLBACK");
+		throw error;
+	}
+}

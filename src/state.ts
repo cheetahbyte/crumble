@@ -1,24 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { openDatabase } from "./db/database.ts";
-import type { assistantInbox, assistantMemory, assistantMemoryHistory, assistantSchedules } from "./db/assistant-schema.ts";
+import { transaction } from "./db/database.ts";
+import type { assistantInbox, assistantSchedules } from "./db/assistant-schema.ts";
+import { validateTimezone } from "./paths.ts";
 import { CronExpressionParser } from "cron-parser";
 
 export type InboundSource = "terminal" | "discord" | "internal";
 export type InboundStatus = "pending" | "processing" | "completed" | "failed";
-
-export interface MemoryEntry {
-	key: string;
-	value: unknown;
-	updatedAt: number;
-}
-
-export interface MemoryRevision extends MemoryEntry {
-	revision: number;
-	reason: string;
-	operation: "save" | "rollback" | "import";
-}
 
 export interface InboundRequest {
 	id: string;
@@ -84,17 +73,13 @@ export interface Schedule {
 	paused: boolean;
 }
 
-type MemoryRow = Pick<InferSelectModel<typeof assistantMemory>, "key" | "value_json" | "updated_at">;
-type MemoryRevisionRow = InferSelectModel<typeof assistantMemoryHistory>;
 type InboundRow = InferSelectModel<typeof assistantInbox>;
 type ScheduleRow = InferSelectModel<typeof assistantSchedules>;
 
 const SOURCES: readonly string[] = ["terminal", "discord", "internal"];
 const STATUSES: readonly string[] = ["pending", "processing", "completed", "failed"];
 const MAX_ID_LENGTH = 200;
-const MAX_KEY_LENGTH = 256;
 const MAX_TEXT_LENGTH = 32_000;
-const MAX_MEMORY_VALUE_LENGTH = 256_000;
 const MAX_RESPONSE_LENGTH = 1_000_000;
 const MIN_INTERVAL_MS = 60_000;
 
@@ -168,116 +153,19 @@ function validateScheduleFields(input: Pick<ScheduleInput, "cron" | "timezone" |
 	if (input.notificationPolicy !== undefined && input.notificationPolicy !== "always" && input.notificationPolicy !== "changes_only") {
 		throw new Error("notificationPolicy must be always or changes_only");
 	}
-	if (input.timezone !== undefined) {
-		try { new Intl.DateTimeFormat("en-US", { timeZone: input.timezone }); }
-		catch { throw new Error(`Invalid timezone: ${input.timezone}`); }
-	}
+	if (input.timezone !== undefined) validateTimezone(input.timezone);
 	if (input.cron !== undefined && input.cron !== null) {
 		if (typeof input.cron !== "string" || input.cron.trim() === "") throw new Error("cron must be a non-empty expression");
 		CronExpressionParser.parse(input.cron, { currentDate: new Date(), tz: input.timezone ?? "UTC" });
 	}
 }
 
-/** Tenant-local durable memory, request inbox/outbox, and generic schedules. */
+/** Tenant-local request inbox/outbox and schedules. The caller owns the database connection. */
 export class AssistantState {
 	private readonly db: DatabaseSync;
 
-	constructor(path: string) {
-		this.db = openDatabase(path, "assistant");
-	}
-
-	getMemory(key: string): unknown | undefined {
-		this.validateMemoryKey(key);
-		const row = this.db.prepare("SELECT value_json FROM assistant_memory WHERE key = ?").get(key) as { value_json: string } | undefined;
-		return row ? JSON.parse(row.value_json) as unknown : undefined;
-	}
-
-	listMemory(): MemoryEntry[] {
-		const rows = this.db.prepare("SELECT key, value_json, updated_at FROM assistant_memory ORDER BY key").all() as unknown as MemoryRow[];
-		return rows.map((row) => ({ key: row.key, value: JSON.parse(row.value_json) as unknown, updatedAt: row.updated_at }));
-	}
-
-	setMemory(key: string, value: unknown, reason = "Updated memory"): void {
-		this.validateMemoryKey(key);
-		if (typeof reason !== "string" || reason.trim().length === 0 || reason.length > 2_000) {
-			throw new Error("Memory reason must be a non-empty string of at most 2000 characters");
-		}
-		let valueJson: string | undefined;
-		try {
-			valueJson = JSON.stringify(value);
-		} catch (error) {
-			throw new Error(`Memory value must be JSON-serializable: ${String(error)}`);
-		}
-		if (valueJson === undefined || valueJson.length > MAX_MEMORY_VALUE_LENGTH) {
-			throw new Error(`Memory value must serialize to at most ${MAX_MEMORY_VALUE_LENGTH} characters`);
-		}
-		const now = Date.now();
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			const current = this.db.prepare("SELECT value_json FROM assistant_memory WHERE key = ?").get(key) as { value_json: string } | undefined;
-			if (current?.value_json === valueJson) { this.db.exec("COMMIT"); return; }
-			const inserted = this.db.prepare(`INSERT INTO assistant_memory_history (key, value_json, reason, operation, created_at)
-				VALUES (?, ?, ?, 'save', ?)`).run(key, valueJson, reason, now);
-			this.db.prepare(`INSERT INTO assistant_memory (key, value_json, updated_at, current_revision) VALUES (?, ?, ?, ?)
-				ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at, current_revision = excluded.current_revision`)
-				.run(key, valueJson, now, Number(inserted.lastInsertRowid));
-			this.db.exec("COMMIT");
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
-	}
-
-	memoryHistory(key: string): MemoryRevision[] {
-		this.validateMemoryKey(key);
-		const rows = this.db.prepare("SELECT id, key, value_json, reason, operation, created_at FROM assistant_memory_history WHERE key = ? ORDER BY id DESC")
-			.all(key) as unknown as MemoryRevisionRow[];
-		return rows.map((row) => ({
-			revision: row.id,
-			key: row.key,
-			value: JSON.parse(row.value_json) as unknown,
-			reason: row.reason,
-			operation: row.operation,
-			updatedAt: row.created_at,
-		}));
-	}
-
-	/** Restore the save immediately before the currently selected save revision. */
-	rollbackMemory(key: string): boolean {
-		this.validateMemoryKey(key);
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			const current = this.db.prepare("SELECT value_json, current_revision FROM assistant_memory WHERE key = ?").get(key) as { value_json: string; current_revision: number | null } | undefined;
-			if (!current || current.current_revision === null) { this.db.exec("COMMIT"); return false; }
-			const prior = this.db.prepare(`SELECT id, value_json FROM assistant_memory_history
-				WHERE key = ? AND id < ? AND operation IN ('save', 'import') ORDER BY id DESC LIMIT 1`)
-				.get(key, current.current_revision) as { id: number; value_json: string } | undefined;
-			if (!prior || prior.value_json === current.value_json) { this.db.exec("COMMIT"); return false; }
-			const now = Date.now();
-			this.db.prepare(`INSERT INTO assistant_memory_history (key, value_json, reason, operation, created_at)
-				VALUES (?, ?, 'Rolled back to a previous revision', 'rollback', ?)`).run(key, prior.value_json, now);
-			this.db.prepare("UPDATE assistant_memory SET value_json = ?, updated_at = ?, current_revision = ? WHERE key = ?")
-				.run(prior.value_json, now, prior.id, key);
-			this.db.exec("COMMIT");
-			return true;
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
-	}
-
-	deleteMemory(key: string): boolean {
-		this.validateMemoryKey(key);
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			this.db.prepare("DELETE FROM assistant_memory_history WHERE key = ?").run(key);
-			const deleted = Number(this.db.prepare("DELETE FROM assistant_memory WHERE key = ?").run(key).changes) > 0;
-			this.db.exec("COMMIT");
-			return deleted;
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
+	constructor(db: DatabaseSync) {
+		this.db = db;
 	}
 
 	/** Insert once by stable id. Returns false when that id was already accepted. */
@@ -311,69 +199,51 @@ export class AssistantState {
 	complete(id: string, response: string, notify = true): boolean {
 		validateId(id);
 		if (typeof response !== "string" || response.length > MAX_RESPONSE_LENGTH) throw new Error(`Response must be a string of at most ${MAX_RESPONSE_LENGTH} characters`);
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
+		return transaction(this.db, () => {
 			const now = Date.now();
 			const result = this.db.prepare(`UPDATE assistant_inbox
 				SET status = 'completed', response = ?, error = NULL, updated_at = ? WHERE id = ? AND status = 'processing'`).run(response, now, id);
-			if (Number(result.changes) > 0) {
-				const request = this.db.prepare("SELECT schedule_id FROM assistant_inbox WHERE id = ?").get(id) as { schedule_id: string | null };
-				let shouldDeliver = true;
-				if (request.schedule_id !== null) {
-					const schedule = this.db.prepare("SELECT notification_policy, last_result FROM assistant_schedules WHERE id = ?").get(request.schedule_id) as { notification_policy: string; last_result: string | null } | undefined;
-					if (schedule) {
-						shouldDeliver = schedule.notification_policy !== "changes_only" || (notify && response !== schedule.last_result);
-						this.db.prepare("UPDATE assistant_schedules SET last_result = ?, last_notified_result = CASE WHEN ? THEN ? ELSE last_notified_result END WHERE id = ?")
-							.run(response, shouldDeliver ? 1 : 0, response, request.schedule_id);
-					}
+			if (Number(result.changes) === 0) return false;
+			const request = this.db.prepare("SELECT schedule_id FROM assistant_inbox WHERE id = ?").get(id) as { schedule_id: string | null };
+			let shouldDeliver = true;
+			if (request.schedule_id !== null) {
+				const schedule = this.db.prepare("SELECT notification_policy, last_result FROM assistant_schedules WHERE id = ?").get(request.schedule_id) as { notification_policy: string; last_result: string | null } | undefined;
+				if (schedule) {
+					shouldDeliver = schedule.notification_policy !== "changes_only" || (notify && response !== schedule.last_result);
+					this.db.prepare("UPDATE assistant_schedules SET last_result = ?, last_notified_result = CASE WHEN ? THEN ? ELSE last_notified_result END WHERE id = ?")
+						.run(response, shouldDeliver ? 1 : 0, response, request.schedule_id);
 				}
-				if (shouldDeliver) this.db.prepare("INSERT INTO assistant_deliveries (id) VALUES (?) ON CONFLICT(id) DO UPDATE SET acknowledged_at = NULL").run(id);
 			}
-			this.db.exec("COMMIT");
-			return Number(result.changes) > 0;
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
+			if (shouldDeliver) this.queueDelivery(id);
+			return true;
+		});
 	}
 
 	fail(id: string, error: string): boolean {
 		validateId(id);
 		validateText(error, "Error", MAX_TEXT_LENGTH);
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			const now = Date.now();
+		return transaction(this.db, () => {
 			const result = this.db.prepare(`UPDATE assistant_inbox
-				SET status = 'failed', response = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'processing'`).run(error, error, now, id);
-			if (Number(result.changes) > 0) {
-				this.db.prepare("INSERT INTO assistant_deliveries (id) VALUES (?) ON CONFLICT(id) DO UPDATE SET acknowledged_at = NULL").run(id);
-			}
-			this.db.exec("COMMIT");
-			return Number(result.changes) > 0;
-		} catch (cause) {
-			this.db.exec("ROLLBACK");
-			throw cause;
-		}
+				SET status = 'failed', response = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'processing'`).run(error, error, Date.now(), id);
+			if (Number(result.changes) === 0) return false;
+			this.queueDelivery(id);
+			return true;
+		});
 	}
 
 	/** Convert abandoned work to a durable failure; interrupted requests are never replayed. */
 	recoverInterrupted(): InboundRequest[] {
 		const interruptedText = "Request was interrupted when the application stopped. It was not replayed automatically.";
 		const now = Date.now();
-		let rows: InboundRow[] = [];
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
-			rows = this.db.prepare("SELECT * FROM assistant_inbox WHERE status = 'processing' ORDER BY rowid").all() as unknown as InboundRow[];
+		const rows = transaction(this.db, () => {
+			const rows = this.db.prepare("SELECT * FROM assistant_inbox WHERE status = 'processing' ORDER BY rowid").all() as unknown as InboundRow[];
 			for (const row of rows) {
 				this.db.prepare("UPDATE assistant_inbox SET status = 'failed', response = ?, error = ?, updated_at = ? WHERE id = ? AND status = 'processing'")
 					.run(interruptedText, interruptedText, now, row.id);
-				this.db.prepare("INSERT INTO assistant_deliveries (id) VALUES (?) ON CONFLICT(id) DO UPDATE SET acknowledged_at = NULL").run(row.id);
+				this.queueDelivery(row.id);
 			}
-			this.db.exec("COMMIT");
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
+			return rows;
+		});
 		return rows.map((row) => ({ ...toInbound(row), status: "failed", response: interruptedText, error: interruptedText, updatedAt: now }));
 	}
 
@@ -465,30 +335,31 @@ export class AssistantState {
 	/** Queue an immediate execution unless this routine already has queued or running work. */
 	runScheduleNow(id: string): boolean {
 		validateId(id);
-		this.db.exec("BEGIN IMMEDIATE");
-		try {
+		return transaction(this.db, () => {
 			const schedule = this.db.prepare("SELECT * FROM assistant_schedules WHERE id = ? AND enabled = 1").get(id) as ScheduleRow | undefined;
-			if (!schedule || this.hasActiveScheduleRun(id)) { this.db.exec("COMMIT"); return false; }
+			if (!schedule || this.hasActiveScheduleRun(id)) return false;
 			const requestId = `schedule:manual:${randomUUID()}`;
 			const at = Date.now();
 			const inserted = this.db.prepare(`INSERT INTO assistant_inbox (id, text, source, status, created_at, updated_at, schedule_id)
 				VALUES (?, ?, ?, 'pending', ?, ?, ?)`).run(requestId, schedule.prompt, schedule.source, at, at, id);
-			this.db.exec("COMMIT");
 			return Number(inserted.changes) > 0;
-		} catch (error) { this.db.exec("ROLLBACK"); throw error; }
+		});
 	}
 
 	private hasActiveScheduleRun(id: string): boolean {
 		return Boolean(this.db.prepare("SELECT 1 FROM assistant_inbox WHERE schedule_id = ? AND status IN ('pending', 'processing') LIMIT 1").get(id));
 	}
 
+	private queueDelivery(id: string): void {
+		this.db.prepare("INSERT INTO assistant_deliveries (id) VALUES (?) ON CONFLICT(id) DO UPDATE SET acknowledged_at = NULL").run(id);
+	}
+
 	/** Enqueue at most one event per due schedule, then skip missed interval occurrences. */
 	enqueueDueSchedules(now = Date.now()): number {
 		if (!Number.isFinite(now)) throw new Error("now must be a finite millisecond timestamp");
 		const at = Math.trunc(now);
-		this.db.exec("BEGIN IMMEDIATE");
-		let enqueued = 0;
-		try {
+		return transaction(this.db, () => {
+			let enqueued = 0;
 			const due = this.db.prepare("SELECT * FROM assistant_schedules WHERE enabled = 1 AND paused = 0 AND due_at <= ? ORDER BY due_at, id").all(at) as unknown as ScheduleRow[];
 			const insert = this.db.prepare(`INSERT INTO assistant_inbox (id, text, source, status, created_at, updated_at, schedule_id)
 				VALUES (?, ?, ?, 'pending', ?, ?, ?) ON CONFLICT(id) DO NOTHING`);
@@ -512,21 +383,7 @@ export class AssistantState {
 					advance.run(nextDueAt, 1, row.id);
 				}
 			}
-			this.db.exec("COMMIT");
 			return enqueued;
-		} catch (error) {
-			this.db.exec("ROLLBACK");
-			throw error;
-		}
-	}
-
-	close(): void {
-		this.db.close();
-	}
-
-	private validateMemoryKey(key: string): void {
-		if (typeof key !== "string" || key.trim().length === 0 || key.length > MAX_KEY_LENGTH) {
-			throw new Error(`Memory key must be a non-empty string of at most ${MAX_KEY_LENGTH} characters`);
-		}
+		});
 	}
 }

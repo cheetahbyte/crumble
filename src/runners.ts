@@ -1,72 +1,42 @@
 import { createHash } from "node:crypto";
 import { type ChildProcessWithoutNullStreams, execFileSync, spawn } from "node:child_process";
-import { lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdirSync, realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
+import { isWithin, rejectSymlink, SLUG } from "./paths.ts";
 import { piCli } from "./pi-command.ts";
-import { tenantEnvironment } from "./tenants.ts";
+import { type TenantConfig, tenantEnvironment } from "./tenants.ts";
 
 export interface WorkerRunner {
 	sessionDir(job: Job): string;
 	spawn(job: Job, piArgs: string[]): ChildProcessWithoutNullStreams;
 }
 
-export interface RunnerDirs {
-	jobsDir: string;
-	workspacesDir: string;
-	/** Tenant ID is included in sandbox names when the runner is tenant-scoped. */
-	tenantId?: string;
-	homeDir?: string;
-	agentDir?: string;
-	rootDir?: string;
-}
+export type RunnerDirs = Pick<TenantConfig, "id" | "rootDir" | "homeDir" | "agentDir" | "jobsDir" | "workspacesDir">;
 
-const SLUG = /^[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
-
-function isWithin(parent: string, child: string): boolean {
-	const rel = relative(parent, child);
-	return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
-
-function assertScopedPath(root: string | undefined, path: string, label: string): string {
+function assertScopedPath(root: string, path: string, label: string): string {
 	const actual = realpathSync(path);
-	if (root) {
-		const actualRoot = realpathSync(root);
-		if (!isWithin(actualRoot, actual)) throw new Error(`${label} resolves outside the tenant directory`);
-	}
+	if (!isWithin(realpathSync(root), actual)) throw new Error(`${label} resolves outside the tenant directory`);
 	return actual;
 }
 
-function rejectSymlink(path: string, label: string): void {
-	try {
-		if (lstatSync(path).isSymbolicLink()) throw new Error(`${label} must not be a symbolic link`);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
-}
-
-function validateProject(project: string): string {
+export function resolveWorkspacePath(dirs: Pick<RunnerDirs, "rootDir" | "workspacesDir">, project: string): string {
 	if (!SLUG.test(project)) throw new Error(`Invalid project name ${JSON.stringify(project)}: use a lowercase slug`);
-	return project;
-}
-
-export function resolveWorkspacePath(dirs: RunnerDirs, project: string): string {
-	validateProject(project);
-	if (dirs.rootDir) rejectSymlink(dirs.rootDir, "Tenant directory");
+	rejectSymlink(dirs.rootDir, "Tenant directory");
 	rejectSymlink(dirs.workspacesDir, "Tenant workspaces directory");
 	mkdirSync(dirs.workspacesDir, { recursive: true, mode: 0o700 });
 	const workspaces = assertScopedPath(dirs.rootDir, dirs.workspacesDir, "Workspace directory");
 	const workspace = resolve(workspaces, project);
 	rejectSymlink(workspace, "Project workspace");
 	mkdirSync(workspace, { recursive: true, mode: 0o700 });
-	const actual = assertScopedPath(dirs.rootDir ? realpathSync(dirs.rootDir) : workspaces, workspace, "Project workspace");
+	const actual = assertScopedPath(dirs.rootDir, workspace, "Project workspace");
 	if (!isWithin(workspaces, actual)) throw new Error("Project workspace resolves outside the tenant workspaces directory");
 	return actual;
 }
 
 function prepareSessionDir(dirs: RunnerDirs, job: Job): string {
 	if (!SLUG.test(job.id)) throw new Error(`Invalid job id ${JSON.stringify(job.id)}`);
-	if (dirs.rootDir) rejectSymlink(dirs.rootDir, "Tenant directory");
+	rejectSymlink(dirs.rootDir, "Tenant directory");
 	rejectSymlink(dirs.jobsDir, "Tenant jobs directory");
 	mkdirSync(dirs.jobsDir, { recursive: true, mode: 0o700 });
 	assertScopedPath(dirs.rootDir, dirs.jobsDir, "Jobs directory");
@@ -82,11 +52,7 @@ function prepareSessionDir(dirs: RunnerDirs, job: Job): string {
 
 /** Pass only execution essentials and tenant-local Pi/HOME locations to workers. */
 export function workerEnvironment(dirs: RunnerDirs, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-	const env: NodeJS.ProcessEnv = dirs.homeDir && dirs.agentDir
-		? tenantEnvironment({ homeDir: dirs.homeDir, agentDir: dirs.agentDir })
-		: { PATH: process.env.PATH, HOME: dirs.homeDir };
-	if (dirs.agentDir) env.PI_CODING_AGENT_DIR = dirs.agentDir;
-	return { ...env, ...extra };
+	return { ...tenantEnvironment(dirs), ...extra };
 }
 
 // Unsandboxed: the worker's tools act directly on this machine.
@@ -100,28 +66,38 @@ export function hostRunner(dirs: RunnerDirs): WorkerRunner {
 	};
 }
 
-export interface SandboxOptions {
-	image: string;
-	sandboxExtension: string;
-}
+const SANDBOX_EXTENSION = join(import.meta.dirname, "worker", "sandbox.ts");
 
 export function containerName(dirs: RunnerDirs, workspace: string, project: string): string {
-	const scope = dirs.tenantId ? `${dirs.tenantId}-` : "";
 	const hash = createHash("sha256").update(resolve(workspace)).digest("hex").slice(0, 12);
-	return `crumble-sandbox-${scope}${project}-${hash}`.slice(0, 120);
+	return `crumble-sandbox-${dirs.id}-${project}-${hash}`.slice(0, 120);
 }
 
-function ensureSandbox(name: string, workspace: string, image: string): void {
-	let running = "";
+const SANDBOX_HOME = "/root";
+const SANDBOX_PATH = `${SANDBOX_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+
+/** One home directory per tenant, shared by all of its sandboxes, so installed tools and logins survive. */
+export function resolveSandboxHome(dirs: RunnerDirs): string {
+	rejectSymlink(dirs.rootDir, "Tenant directory");
+	const home = join(dirs.rootDir, "sandbox-home");
+	rejectSymlink(home, "Sandbox home directory");
+	mkdirSync(home, { recursive: true, mode: 0o700 });
+	return assertScopedPath(dirs.rootDir, home, "Sandbox home directory");
+}
+
+function ensureSandbox(name: string, workspace: string, home: string, image: string): void {
+	let state = "";
 	try {
-		running = execFileSync("docker", ["inspect", "-f", "{{.State.Running}}", name], { stdio: ["ignore", "pipe", "ignore"] })
+		state = execFileSync("docker", ["inspect", "-f", `{{.State.Running}} {{range .Mounts}}{{if eq .Destination "${SANDBOX_HOME}"}}{{.Source}}{{end}}{{end}}`, name], { stdio: ["ignore", "pipe", "ignore"] })
 			.toString()
 			.trim();
 	} catch {
 		// No container with this name yet.
 	}
-	if (running === "true") return;
-	if (running === "false") execFileSync("docker", ["rm", name], { stdio: "ignore" });
+	const [running, mountedHome] = [state.split(" ")[0], state.slice(state.indexOf(" ") + 1)];
+	if (running === "true" && mountedHome === home) return;
+	// Containers created before the shared home existed are replaced; workers do not survive a service restart anyway.
+	if (state) execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
 	execFileSync(
 		"docker",
 		[
@@ -137,6 +113,14 @@ function ensureSandbox(name: string, workspace: string, image: string): void {
 			"512",
 			"-v",
 			`${workspace}:/workspace`,
+			"-v",
+			`${home}:${SANDBOX_HOME}`,
+			"-e",
+			`HOME=${SANDBOX_HOME}`,
+			"-e",
+			`NPM_CONFIG_PREFIX=${SANDBOX_HOME}/.local`,
+			"-e",
+			`PATH=${SANDBOX_PATH}`,
 			"-w",
 			"/workspace",
 			image,
@@ -148,16 +132,16 @@ function ensureSandbox(name: string, workspace: string, image: string): void {
 }
 
 // The worker's Pi process runs on the host with the tenant's Pi config; file and shell tools
-// run in one long-lived container per tenant and full workspace path.
-export function sandboxRunner(dirs: RunnerDirs, options: SandboxOptions): WorkerRunner {
+// run in one long-lived container per tenant and full workspace path, sharing the tenant's sandbox home.
+export function sandboxRunner(dirs: RunnerDirs, image: string): WorkerRunner {
 	return {
 		sessionDir: (job) => prepareSessionDir(dirs, job),
 		spawn(job, piArgs) {
 			const workspace = resolveWorkspacePath(dirs, job.project);
 			const container = containerName(dirs, workspace, job.project);
-			ensureSandbox(container, workspace, options.image);
+			ensureSandbox(container, workspace, resolveSandboxHome(dirs), image);
 			const env = workerEnvironment(dirs, { CRUMBLE_SANDBOX_CONTAINER: container });
-			return spawn(process.execPath, [piCli, ...piArgs, "-e", options.sandboxExtension], { cwd: workspace, env });
+			return spawn(process.execPath, [piCli, ...piArgs, "-e", SANDBOX_EXTENSION], { cwd: workspace, env });
 		},
 	};
 }

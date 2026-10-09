@@ -7,17 +7,20 @@ import { test } from "node:test";
 import { LearningStore } from "./learning.ts";
 import { learningExtension } from "./extensions/learning.ts";
 import { AssistantState, type InboundSource } from "./state.ts";
+import { openDatabase } from "./db/database.ts";
 
 function withTenant(run: (state: AssistantState, store: LearningStore, directory: string) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-learning-"));
 	const path = join(directory, "assistant.db");
-	const state = new AssistantState(path);
-	const store = new LearningStore(path);
+	const stateDb = openDatabase(path, "assistant");
+	const state = new AssistantState(stateDb);
+	const storeDb = openDatabase(path, "assistant");
+	const store = new LearningStore(storeDb);
 	try {
 		run(state, store, directory);
 	} finally {
-		store.close();
-		state.close();
+		storeDb.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
@@ -31,10 +34,12 @@ function complete(state: AssistantState, id: string, request: string, response: 
 test("finished inbox history is backfilled, searchable, and returned by ID", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-learning-backfill-"));
 	const path = join(directory, "assistant.db");
-	const state = new AssistantState(path);
+	const stateDb = openDatabase(path, "assistant");
+	const state = new AssistantState(stateDb);
 	try {
 		complete(state, "terminal:old", "Find the lunar calendar conversion", "Converted the lunar calendar date to a solar date.");
-		const store = new LearningStore(path);
+		const storeDb = openDatabase(path, "assistant");
+		const store = new LearningStore(storeDb);
 		try {
 			const results = store.searchHistory("lunar OR * calendar", 5);
 			assert.equal(results.length, 1);
@@ -53,10 +58,10 @@ test("finished inbox history is backfilled, searchable, and returned by ID", () 
 			});
 			assert.equal(store.readHistory("missing"), undefined);
 		} finally {
-			store.close();
+			storeDb.close();
 		}
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -64,16 +69,19 @@ test("finished inbox history is backfilled, searchable, and returned by ID", () 
 test("inbox completion and edits keep the FTS index current across reopen", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-learning-live-"));
 	const path = join(directory, "assistant.db");
-	const state = new AssistantState(path);
-	let store = new LearningStore(path);
+	const stateDb = openDatabase(path, "assistant");
+	const state = new AssistantState(stateDb);
+	let storeDb = openDatabase(path, "assistant");
+	let store = new LearningStore(storeDb);
 	try {
 		complete(state, "discord:new", "Plan a garden", "Use basil and thyme.", "discord");
 		assert.equal(store.searchHistory("basil")[0]?.id, "discord:new");
 		state.enqueue({ id: "internal:pending", text: "confidential pending item", source: "internal" });
 		assert.deepEqual(store.searchHistory("confidential"), []);
 
-		store.close();
-		store = new LearningStore(path);
+		storeDb.close();
+		storeDb = openDatabase(path, "assistant");
+		store = new LearningStore(storeDb);
 		assert.equal(store.readHistory("discord:new")?.response, "Use basil and thyme.");
 		assert.equal(store.searchHistory("thyme")[0]?.source, "discord");
 		assert.deepEqual(store.searchHistory("garden", 1, 1), []);
@@ -87,8 +95,8 @@ test("inbox completion and edits keep the FTS index current across reopen", () =
 		}
 		assert.deepEqual(store.searchHistory("thyme"), []);
 	} finally {
-		store.close();
-		state.close();
+		storeDb.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -109,10 +117,14 @@ test("history and learned procedures are isolated by tenant database", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-learning-tenants-"));
 	const aPath = join(directory, "a.db");
 	const bPath = join(directory, "b.db");
-	const aState = new AssistantState(aPath);
-	const bState = new AssistantState(bPath);
-	const a = new LearningStore(aPath);
-	const b = new LearningStore(bPath);
+	const aStateDb = openDatabase(aPath, "assistant");
+	const aState = new AssistantState(aStateDb);
+	const bStateDb = openDatabase(bPath, "assistant");
+	const bState = new AssistantState(bStateDb);
+	const aDb = openDatabase(aPath, "assistant");
+	const a = new LearningStore(aDb);
+	const bDb = openDatabase(bPath, "assistant");
+	const b = new LearningStore(bDb);
 	try {
 		complete(aState, "terminal:a", "Tenant-only phrase quartz", "Private answer");
 		assert.equal(a.searchHistory("quartz").length, 1);
@@ -121,10 +133,10 @@ test("history and learned procedures are isolated by tenant database", () => {
 		assert.equal(a.readSkill("gardening")?.instructions, "Prefer herbs that share water needs.");
 		assert.equal(b.readSkill("gardening"), undefined);
 	} finally {
-		a.close();
-		b.close();
-		aState.close();
-		bState.close();
+		aDb.close();
+		bDb.close();
+		aStateDb.close();
+		bStateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });

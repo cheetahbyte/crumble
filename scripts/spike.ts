@@ -21,7 +21,7 @@ prepareTenant(tenant);
 const workspace = join(tenant.workspacesDir, "demo");
 assert.ok(!readFileSync(join(workspace, "greet.js"), "utf8").includes(PHRASE), "demo project is in its initial state");
 
-mkdirSync(config.jobsDir, { recursive: true });
+mkdirSync(tenant.jobsDir, { recursive: true });
 const store = new JobStore(tenant.jobsDatabasePath);
 
 let settle: ((job: Job) => void) | undefined;
@@ -29,7 +29,6 @@ const nextSettled = () => new Promise<Job>((resolve) => (settle = resolve));
 const supervisor = new Supervisor({
 	store,
 	runner: createRunner(tenant, config),
-	askExtension: config.askExtension,
 	provider: tenant.provider,
 	model: tenant.model,
 	onSettled: (job) => settle?.(job),

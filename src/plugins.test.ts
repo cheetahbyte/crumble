@@ -3,6 +3,7 @@ import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
+import { openDatabase } from "./db/database.ts";
 import { PluginManager } from "./plugins.ts";
 import { dockerPluginExecutor } from "./plugin-executor.ts";
 
@@ -15,6 +16,7 @@ async function fixture() {
 	await writeFile(join(source, "main.mjs"), "export default 1;\n");
 	const entries: string[] = [];
 	const manager = new PluginManager({
+		db: openDatabase(":memory:", "assistant"),
 		rootDir: join(base, "plugins"),
 		workspacesDir,
 		image: "sandbox-test",
@@ -80,8 +82,9 @@ test("manifest schema errors identify malformed fields", async () => {
 test("runtime failure quarantines one plugin and safe mode disables all plugins", async () => {
 	const f = await fixture();
 	try {
+		const db = openDatabase(":memory:", "assistant");
 		const manager = new PluginManager({
-			rootDir: join(f.base, "quarantine"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice",
+			db, rootDir: join(f.base, "quarantine"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice",
 			executor: async () => { throw new Error("broken integration\nsecret detail"); },
 		});
 		await manager.install("capabilities/weather");
@@ -97,7 +100,7 @@ test("runtime failure quarantines one plugin and safe mode disables all plugins"
 		assert.equal(recoveredVersion.status, "disabled");
 		await assert.rejects(manager.invoke("weather", null), /disabled/);
 		const safe = new PluginManager({
-			rootDir: join(f.base, "quarantine"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", disabled: true,
+			db, rootDir: join(f.base, "quarantine"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", disabled: true,
 			executor: async () => "should not run",
 		});
 		assert.equal((await safe.list())[0]?.status, "disabled");
@@ -110,7 +113,7 @@ test("aborting an invocation leaves a healthy plugin enabled", async () => {
 	try {
 		const controller = new AbortController();
 		const manager = new PluginManager({
-			rootDir: join(f.base, "cancelled"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice",
+			db: openDatabase(":memory:", "assistant"), rootDir: join(f.base, "cancelled"), workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice",
 			executor: async () => {
 				controller.abort();
 				throw new Error("plugin invocation aborted");
@@ -130,7 +133,7 @@ test("malformed registry records are reported without blocking the manager", asy
 		await writeFile(join(rootDir, "plugins.json"), JSON.stringify({ plugins: {
 			weather: { name: "weather", description: "Weather", entry: "main.mjs", version: "../../escape", history: [], enabled: true },
 		} }));
-		const manager = new PluginManager({ rootDir, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", executor: async () => "unused" });
+		const manager = new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", executor: async () => "unused" });
 		const listed = await manager.list();
 		assert.equal(listed[0]?.status, "error");
 		assert.match(listed[0]?.error ?? "", /invalid plugin version/);
@@ -184,28 +187,28 @@ test("manager-owned storage symlinks are rejected", async () => {
 		await mkdir(outside, { recursive: true });
 		const rootLink = join(f.base, "root-link");
 		await symlink(outside, rootLink);
-		await assert.rejects(new PluginManager({ rootDir: rootLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /plugin root must be a real directory/);
+		await assert.rejects(new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir: rootLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /plugin root must be a real directory/);
 
 		const snapshotsRootLink = join(f.base, "snapshots-root-link");
 		await mkdir(snapshotsRootLink, { recursive: true });
 		await symlink(outside, join(snapshotsRootLink, "snapshots"));
-		await assert.rejects(new PluginManager({ rootDir: snapshotsRootLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
+		await assert.rejects(new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir: snapshotsRootLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
 
 		const registryLink = join(f.base, "registry-link");
 		await mkdir(registryLink, { recursive: true });
 		await writeFile(join(outside, "registry-source.json"), JSON.stringify({ plugins: {} }));
 		await symlink(join(outside, "registry-source.json"), join(registryLink, "plugins.json"));
-		await assert.rejects(new PluginManager({ rootDir: registryLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
+		await assert.rejects(new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir: registryLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
 
 		const dataLink = join(f.base, "data-link");
 		await mkdir(join(dataLink, "data"), { recursive: true });
 		await symlink(outside, join(dataLink, "data", "alice"));
-		await assert.rejects(new PluginManager({ rootDir: dataLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
+		await assert.rejects(new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir: dataLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice" }).list(), /storage cannot contain symlinks/);
 
 		const snapshotLink = join(f.base, "snapshot-link");
 		await mkdir(join(snapshotLink, "snapshots"), { recursive: true });
 		await symlink(outside, join(snapshotLink, "snapshots", "weather"));
-		const snapshotManager = new PluginManager({ rootDir: snapshotLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", executor: async () => "unused" });
+		const snapshotManager = new PluginManager({ db: openDatabase(":memory:", "assistant"), rootDir: snapshotLink, workspacesDir: f.workspacesDir, image: "unused", tenantId: "alice", executor: async () => "unused" });
 		await assert.rejects(snapshotManager.install("capabilities/weather"), /storage cannot contain symlinks/);
 	} finally { await rm(f.base, { recursive: true, force: true }); }
 });

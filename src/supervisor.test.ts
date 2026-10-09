@@ -24,7 +24,6 @@ function setup(options: { maxConcurrency?: number; timeoutMs?: number; spawnErro
 	const supervisor = new Supervisor({
 		store,
 		runner,
-		askExtension: "/ask.ts",
 		provider: "test-provider",
 		model: "test-model",
 		onSettled: (job) => {

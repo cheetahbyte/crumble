@@ -11,7 +11,7 @@ function withDirs(fn: (base: string, dirs: RunnerDirs) => void): void {
 	const tenantRoot = join(base, "tenant");
 	mkdirSync(tenantRoot, { recursive: true });
 	const dirs: RunnerDirs = {
-		tenantId: "lea",
+		id: "lea",
 		rootDir: tenantRoot,
 		homeDir: join(tenantRoot, "home"),
 		agentDir: join(tenantRoot, "agent"),
@@ -73,7 +73,7 @@ test("sandbox identity includes tenant scope and full workspace location", () =>
 	withDirs((base, dirs) => {
 		const workspace = resolveWorkspacePath(dirs, "personal");
 		const first = containerName(dirs, workspace, "personal");
-		const otherTenant = containerName({ ...dirs, tenantId: "alex" }, workspace, "personal");
+		const otherTenant = containerName({ ...dirs, id: "alex" }, workspace, "personal");
 		const otherWorkspace = containerName(dirs, join(base, "elsewhere", "personal"), "personal");
 		assert.notEqual(first, otherTenant);
 		assert.notEqual(first, otherWorkspace);

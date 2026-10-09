@@ -4,23 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { LearningStore } from "./learning.ts";
 import { AssistantState } from "./state.ts";
+import { openDatabase } from "./db/database.ts";
 
 function withState(run: (state: AssistantState, directory: string) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-state-"));
-	const state = new AssistantState(join(directory, "assistant.db"));
+	const stateDb = openDatabase(join(directory, "assistant.db"), "assistant");
+	const state = new AssistantState(stateDb);
 	try {
 		run(state, directory);
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 }
 
 test("memory persists in its tenant database and tenant databases are isolated", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-tenants-"));
-	const alice = new AssistantState(join(directory, "alice.db"));
-	const bob = new AssistantState(join(directory, "bob.db"));
+	const aliceDb = openDatabase(join(directory, "alice.db"), "assistant");
+	const alice = new LearningStore(aliceDb);
+	const bobDb = openDatabase(join(directory, "bob.db"), "assistant");
+	const bob = new LearningStore(bobDb);
 	try {
 		alice.setMemory("preference", { concise: true });
 		assert.deepEqual(alice.getMemory("preference"), { concise: true });
@@ -29,8 +34,8 @@ test("memory persists in its tenant database and tenant databases are isolated",
 		assert.equal(alice.deleteMemory("preference"), true);
 		assert.equal(alice.deleteMemory("preference"), false);
 	} finally {
-		alice.close();
-		bob.close();
+		aliceDb.close();
+		bobDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -85,19 +90,21 @@ test("inbox claims and outbox deliveries preserve insertion order for equal time
 test("completed output is durable until acknowledged", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-outbox-"));
 	const path = join(directory, "assistant.db");
-	let state = new AssistantState(path);
+	let stateDb = openDatabase(path, "assistant");
+	let state = new AssistantState(stateDb);
 	try {
 		state.enqueue({ id: "terminal:1", text: "hello", source: "terminal" });
 		state.markProcessing("terminal:1");
 		assert.equal(state.complete("terminal:1", "hello back"), true);
-		state.close();
-		state = new AssistantState(path);
+		stateDb.close();
+		stateDb = openDatabase(path, "assistant");
+		state = new AssistantState(stateDb);
 		assert.deepEqual(state.pendingDeliveries(), [{ id: "terminal:1", response: "hello back", source: "terminal", status: "completed" }]);
 		assert.equal(state.acknowledgeDelivery("terminal:1"), true);
 		assert.equal(state.acknowledgeDelivery("terminal:1"), false);
 		assert.deepEqual(state.pendingDeliveries(), []);
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -105,12 +112,14 @@ test("completed output is durable until acknowledged", () => {
 test("schedules persist, fire only once, and cancel cleanly", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-schedules-"));
 	const path = join(directory, "assistant.db");
-	let state = new AssistantState(path);
+	let stateDb = openDatabase(path, "assistant");
+	let state = new AssistantState(stateDb);
 	try {
 		const schedule = state.createSchedule({ id: "once", label: "Later", prompt: "do something", dueAt: 100_000, source: "internal" });
 		assert.equal(schedule.enabled, true);
-		state.close();
-		state = new AssistantState(path);
+		stateDb.close();
+		stateDb = openDatabase(path, "assistant");
+		state = new AssistantState(stateDb);
 		assert.equal(state.listSchedules()[0]?.id, "once");
 		assert.equal(state.enqueueDueSchedules(99_999), 0);
 		assert.equal(state.enqueueDueSchedules(100_000), 1);
@@ -122,7 +131,7 @@ test("schedules persist, fire only once, and cancel cleanly", () => {
 		assert.equal(state.cancelSchedule("cancel-me"), true);
 		assert.equal(state.enqueueDueSchedules(1_000_000), 0);
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -142,8 +151,10 @@ test("missed interval periods coalesce into one event and advance beyond now", (
 test("parent and worker connections share a single atomic claim and durable delivery", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-shared-state-"));
 	const path = join(directory, "assistant.db");
-	const parent = new AssistantState(path);
-	const worker = new AssistantState(path);
+	const parentDb = openDatabase(path, "assistant");
+	const parent = new AssistantState(parentDb);
+	const workerDb = openDatabase(path, "assistant");
+	const worker = new AssistantState(workerDb);
 	try {
 		assert.equal(parent.enqueue({ id: "discord:shared", text: "handle this", source: "discord" }), true);
 		assert.equal(parent.nextPending()?.id, "discord:shared");
@@ -151,16 +162,16 @@ test("parent and worker connections share a single atomic claim and durable deli
 		assert.equal(worker.markProcessing("discord:shared"), true);
 		assert.equal(parent.markProcessing("discord:shared"), false);
 
-		worker.setMemory("learned", "kept in the same tenant");
-		assert.equal(parent.getMemory("learned"), "kept in the same tenant");
+		new LearningStore(workerDb).setMemory("learned", "kept in the same tenant");
+		assert.equal(new LearningStore(parentDb).getMemory("learned"), "kept in the same tenant");
 		const longResponse = "x".repeat(50_000);
 		assert.equal(worker.complete("discord:shared", longResponse), true);
 		assert.equal(parent.pendingDeliveries()[0]?.response.length, longResponse.length);
 		assert.equal(parent.acknowledgeDelivery("discord:shared"), true);
 		assert.deepEqual(worker.pendingDeliveries(), []);
 	} finally {
-		parent.close();
-		worker.close();
+		parentDb.close();
+		workerDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -168,16 +179,18 @@ test("parent and worker connections share a single atomic claim and durable deli
 test("two connections coalesce a due schedule into one inbox request", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-shared-schedule-"));
 	const path = join(directory, "assistant.db");
-	const parent = new AssistantState(path);
-	const worker = new AssistantState(path);
+	const parentDb = openDatabase(path, "assistant");
+	const parent = new AssistantState(parentDb);
+	const workerDb = openDatabase(path, "assistant");
+	const worker = new AssistantState(workerDb);
 	try {
 		parent.createSchedule({ id: "shared-once", label: "Shared", prompt: "wake up", dueAt: 10_000, source: "internal" });
 		assert.equal(worker.enqueueDueSchedules(10_000), 1);
 		assert.equal(parent.enqueueDueSchedules(10_000), 0);
 		assert.equal(parent.nextPending()?.text, "wake up");
 	} finally {
-		parent.close();
-		worker.close();
+		parentDb.close();
+		workerDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -203,13 +216,15 @@ test("timezone cron schedules follow wall-clock time across both DST changes", (
 test("paused and manual routines persist and duplicate pending or running executions are coalesced", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-routine-controls-"));
 	const path = join(directory, "assistant.db");
-	let state = new AssistantState(path);
+	let stateDb = openDatabase(path, "assistant");
+	let state = new AssistantState(stateDb);
 	try {
 		state.createSchedule({ id: "routine", label: "Routine", prompt: "check", cron: "* * * * *", timezone: "UTC", dueAt: 1_000, source: "internal" });
 		assert.equal(state.pauseSchedule("routine"), true);
 		assert.equal(state.enqueueDueSchedules(120_000), 0);
-		state.close();
-		state = new AssistantState(path);
+		stateDb.close();
+		stateDb = openDatabase(path, "assistant");
+		state = new AssistantState(stateDb);
 		assert.equal(state.getSchedule("routine")?.paused, true);
 		assert.equal(state.resumeSchedule("routine"), true);
 		assert.equal(state.enqueueDueSchedules(120_000), 1);
@@ -226,7 +241,7 @@ test("paused and manual routines persist and duplicate pending or running execut
 		assert.equal(state.runScheduleNow("routine"), false);
 		assert.equal(state.nextPending()?.scheduleId, "routine");
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
@@ -267,7 +282,8 @@ test("legacy schedule and inbox databases migrate with notification defaults pre
 		INSERT INTO assistant_schedules VALUES ('old', 'Old routine', 'keep me', 12345, 60000, 'terminal', 1, 7);
 	`);
 	legacy.close();
-	const state = new AssistantState(path);
+	const stateDb = openDatabase(path, "assistant");
+	const state = new AssistantState(stateDb);
 	try {
 		assert.deepEqual(state.getSchedule("old"), {
 			id: "old", label: "Old routine", prompt: "keep me", dueAt: 12345, intervalMs: 60000,
@@ -277,7 +293,7 @@ test("legacy schedule and inbox databases migrate with notification defaults pre
 		assert.equal(state.enqueueDueSchedules(12345), 1);
 		assert.equal(state.nextPending()?.scheduleId, "old");
 	} finally {
-		state.close();
+		stateDb.close();
 		rmSync(directory, { recursive: true, force: true });
 	}
 });
