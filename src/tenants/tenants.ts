@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { rejectSymlink, SLUG, validateTimezone } from "../shared/paths.ts";
+import { rejectSymlink, SLUG, validateTimezone } from "#shared/paths";
 
 export interface TenantInput {
 	id: string;

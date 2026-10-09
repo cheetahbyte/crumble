@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { openDatabase, transaction } from "../db/database.ts";
-import type { jobNotifications, jobs } from "../db/jobs-schema.ts";
-import type { RuntimeConfig } from "../config/config.ts";
-import type { TenantConfig } from "../tenants/tenants.ts";
+import { openDatabase, transaction } from "#db/database";
+import type { jobNotifications, jobs } from "#db/jobs-schema";
+import type { RuntimeConfig } from "#config";
+import type { TenantConfig } from "#tenants";
 import { HostRunner } from "./host-runner.ts";
 import type { WorkerRunner } from "./runner.ts";
 import { SandboxRunner } from "./sandbox-runner.ts";

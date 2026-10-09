@@ -1,6 +1,6 @@
-import type { InboundSource } from "../inbox/inbox.ts";
-import type { RuntimeConfig } from "../config/config.ts";
-import type { TenantConfig } from "../tenants/tenants.ts";
+import type { InboundSource } from "#inbox";
+import type { RuntimeConfig } from "#config";
+import type { TenantConfig } from "#tenants";
 
 export type ParentMessage =
 	| { type: "init"; tenant: TenantConfig; app: RuntimeConfig; pluginsDisabled: boolean }

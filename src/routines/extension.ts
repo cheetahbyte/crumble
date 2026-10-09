@@ -1,7 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { InboundRequest } from "../inbox/inbox.ts";
-import { toolResult } from "../shared/tool-result.ts";
+import type { InboundRequest } from "#inbox";
+import { toolResult } from "#shared/tool-result";
 import type { Routines, ScheduleUpdate } from "./routines.ts";
 
 export function routinesExtension(options: {

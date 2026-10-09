@@ -3,13 +3,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { TenantAssistant } from "../../src/assistant/assistant.ts";
-import { Inbox } from "../../src/inbox/inbox.ts";
-import { Routines } from "../../src/routines/routines.ts";
-import { LearningStore } from "../../src/learning/learning.ts";
-import { MemoryStore } from "../../src/memory/memory.ts";
-import { createTenantConfig } from "../../src/tenants/tenants.ts";
-import { openDatabase } from "../../src/db/database.ts";
+import { TenantAssistant } from "#assistant";
+import { Inbox } from "#inbox";
+import { Routines } from "#routines";
+import { LearningStore } from "#learning";
+import { MemoryStore } from "#memory";
+import { createTenantConfig } from "#tenants";
+import { openDatabase } from "#db/database";
 
 test("learned skill controls stay usable without a model, including missing revisions", async () => {
 	const root = mkdtempSync(join(tmpdir(), "crumble-controls-"));

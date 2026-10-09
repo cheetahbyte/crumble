@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { loadAppConfig } from "../../src/config/config.ts";
+import { loadAppConfig } from "#config";
 
 test("default provider resolves the OpenAI OAuth credential saved by Pi login", async () => {
 	const dir = mkdtempSync(join(tmpdir(), "crumble-auth-"));

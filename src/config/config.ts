@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createTenantConfig, type TenantConfig, validateTenants } from "../tenants/tenants.ts";
+import { createTenantConfig, type TenantConfig, validateTenants } from "#tenants";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 

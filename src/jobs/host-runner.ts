@@ -1,7 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import type { Job } from "./jobs.ts";
 import { prepareSessionDir, resolveWorkspacePath, type RunnerDirs, type WorkerRunner, workerEnvironment } from "./runner.ts";
-import { piCliArgs } from "../shared/pi-command.ts";
+import { piCliArgs } from "#shared/pi-command";
 
 // Unsandboxed: the worker's tools act directly on this machine.
 export class HostRunner implements WorkerRunner {

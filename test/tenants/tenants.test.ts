@@ -3,8 +3,8 @@ import { lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { loadAppConfig } from "../../src/config/config.ts";
-import { createTenantConfig, prepareTenant, tenantEnvironment, validateTenants } from "../../src/tenants/tenants.ts";
+import { loadAppConfig } from "#config";
+import { createTenantConfig, prepareTenant, tenantEnvironment, validateTenants } from "#tenants";
 
 function withTempDir(fn: (dir: string) => void): void {
 	const dir = mkdtempSync(join(tmpdir(), "crumble-tenants-"));

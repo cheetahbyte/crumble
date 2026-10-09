@@ -1,13 +1,13 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import type { Channel } from "../channels/channels.ts";
-import type { RuntimeConfig } from "../config/config.ts";
-import { openDatabase } from "../db/database.ts";
-import { Inbox, type InboundSource, isStopRequest } from "../inbox/inbox.ts";
-import { Routines } from "../routines/routines.ts";
+import type { Channel } from "#channels";
+import type { RuntimeConfig } from "#config";
+import { openDatabase } from "#db/database";
+import { Inbox, type InboundSource, isStopRequest } from "#inbox";
+import { Routines } from "#routines";
 import type { ParentMessage, TenantMessage } from "./protocol.ts";
-import { tenantEnvironment, type TenantConfig } from "../tenants/tenants.ts";
+import { tenantEnvironment, type TenantConfig } from "#tenants";
 
 export interface TenantHostOptions {
 	config: TenantConfig;

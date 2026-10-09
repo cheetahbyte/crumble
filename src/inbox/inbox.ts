@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { transaction } from "../db/database.ts";
-import type { assistantInbox } from "../db/assistant-schema.ts";
+import { transaction } from "#db/database";
+import type { assistantInbox } from "#db/assistant-schema";
 
 export { InboxProcessor, type AssistantReply, type InboxOptions } from "./processor.ts";
 

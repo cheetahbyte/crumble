@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { Job } from "../../src/jobs/jobs.ts";
+import type { Job } from "#jobs";
 import { HostRunner } from "../../src/jobs/host-runner.ts";
 import { resolveWorkspacePath, workerEnvironment, type RunnerDirs } from "../../src/jobs/runner.ts";
 import { containerName } from "../../src/jobs/sandbox-runner.ts";

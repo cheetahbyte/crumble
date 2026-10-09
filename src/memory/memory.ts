@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { transaction } from "../db/database.ts";
-import type { assistantMemory, assistantMemoryHistory } from "../db/assistant-schema.ts";
-import { assertText } from "../shared/text.ts";
+import { transaction } from "#db/database";
+import type { assistantMemory, assistantMemoryHistory } from "#db/assistant-schema";
+import { assertText } from "#shared/text";
 
 const MAX_MEMORY_KEY = 256;
 const MAX_MEMORY_VALUE = 256_000;

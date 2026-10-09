@@ -3,8 +3,8 @@ import { test } from "node:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authLoginPaths, runAuthLogin, selectAuthType } from "../../src/auth/auth.ts";
-import { createTenantConfig } from "../../src/tenants/tenants.ts";
+import { authLoginPaths, runAuthLogin, selectAuthType } from "#auth";
+import { createTenantConfig } from "#tenants";
 
 test("Pi authentication stores and model catalogs are scoped to the tenant agent directory", () => {
 	const tenant = createTenantConfig("/tmp/crumble-auth-test", { id: "alice", provider: "openai" }, {

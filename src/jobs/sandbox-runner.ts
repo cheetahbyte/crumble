@@ -4,8 +4,8 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
 import { assertScopedPath, prepareSessionDir, resolveWorkspacePath, type RunnerDirs, type WorkerRunner, workerEnvironment } from "./runner.ts";
-import { rejectSymlink } from "../shared/paths.ts";
-import { piCliArgs } from "../shared/pi-command.ts";
+import { rejectSymlink } from "#shared/paths";
+import { piCliArgs } from "#shared/pi-command";
 
 const SANDBOX_EXTENSION = join(import.meta.dirname, "worker", "sandbox.ts");
 

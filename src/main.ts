@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DiscordChannel } from "./channels/channels.ts";
-import { loadAppConfig } from "./config/config.ts";
-import { TenantHost } from "./host/host.ts";
-import { prepareTenant } from "./tenants/tenants.ts";
+import { DiscordChannel } from "#channels";
+import { loadAppConfig } from "#config";
+import { TenantHost } from "#host";
+import { prepareTenant } from "#tenants";
 
 const app = loadAppConfig();
 const pluginsDisabled = process.env.CRUMBLE_DISABLE_PLUGINS === "1";

@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import { transaction } from "../db/database.ts";
-import type { learningHistory, learningSkillVersions, learningSkills } from "../db/assistant-schema.ts";
-import { assertText } from "../shared/text.ts";
+import { transaction } from "#db/database";
+import type { learningHistory, learningSkillVersions, learningSkills } from "#db/assistant-schema";
+import { assertText } from "#shared/text";
 
 const MAX_SEARCH_QUERY = 512;
 const MAX_SEARCH_LIMIT = 25;

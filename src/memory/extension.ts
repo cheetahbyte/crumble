@@ -1,7 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { containsSecret } from "../shared/secrets.ts";
-import { toolResult } from "../shared/tool-result.ts";
+import { containsSecret } from "#shared/secrets";
+import { toolResult } from "#shared/tool-result";
 import type { MemoryStore } from "./memory.ts";
 
 export function memoryContext(memory: MemoryStore): string {

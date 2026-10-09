@@ -4,8 +4,8 @@ import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile 
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
-import type { plugins } from "../db/assistant-schema.ts";
-import { isWithin, SLUG as TENANT_ID } from "../shared/paths.ts";
+import type { plugins } from "#db/assistant-schema";
+import { isWithin, SLUG as TENANT_ID } from "#shared/paths";
 import { dockerPluginExecutor, pluginDataPath, type PluginExecutor } from "./executor.ts";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";

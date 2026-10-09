@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { Inbox } from "../src/inbox/inbox.ts";
-import { openDatabase } from "../src/db/database.ts";
+import { Inbox } from "#inbox";
+import { openDatabase } from "#db/database";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const mainPath = join(repoRoot, "src", "main.ts");

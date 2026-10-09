@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type Job, JobStore } from "../../src/jobs/jobs.ts";
+import { type Job, JobStore } from "#jobs";
 import type { WorkerRunner } from "../../src/jobs/runner.ts";
 import { Supervisor } from "../../src/jobs/supervisor.ts";
 

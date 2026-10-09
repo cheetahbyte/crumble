@@ -3,8 +3,8 @@ import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { openDatabase } from "../../src/db/database.ts";
-import { PluginManager } from "../../src/plugins/plugins.ts";
+import { openDatabase } from "#db/database";
+import { PluginManager } from "#plugins";
 import { dockerPluginExecutor } from "../../src/plugins/executor.ts";
 
 async function fixture() {

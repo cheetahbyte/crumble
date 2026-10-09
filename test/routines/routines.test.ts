@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { Inbox } from "../../src/inbox/inbox.ts";
-import { Routines } from "../../src/routines/routines.ts";
-import { openDatabase } from "../../src/db/database.ts";
+import { Inbox } from "#inbox";
+import { Routines } from "#routines";
+import { openDatabase } from "#db/database";
 
 function withRoutines(run: (inbox: Inbox, routines: Routines) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-state-"));

@@ -1,6 +1,6 @@
-import { loadAppConfig } from "../src/config/config.ts";
-import { prepareTenant } from "../src/tenants/tenants.ts";
-import { runAuthLogin } from "../src/auth/auth.ts";
+import { loadAppConfig } from "#config";
+import { prepareTenant } from "#tenants";
+import { runAuthLogin } from "#auth";
 
 const app = loadAppConfig();
 const args = process.argv.slice(2).filter((arg) => arg !== "--");

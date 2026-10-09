@@ -4,10 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LearningStore } from "../../src/learning/learning.ts";
-import { learningExtension } from "../../src/learning/extension.ts";
-import { Inbox, type InboundSource } from "../../src/inbox/inbox.ts";
-import { openDatabase } from "../../src/db/database.ts";
+import { LearningStore } from "#learning";
+import { learningExtension } from "#learning/extension";
+import { Inbox, type InboundSource } from "#inbox";
+import { openDatabase } from "#db/database";
 
 function withTenant(run: (inbox: Inbox, store: LearningStore, directory: string) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-learning-"));

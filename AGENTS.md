@@ -14,7 +14,8 @@ Crumble stays small enough that one person can hold it in their head. Every chan
 
 Crumble is a modular monolith. Read `docs/modules.md` before adding a module, moving code between modules, or touching a table.
 
-- A module is a folder under `src/`. Its public surface is the file named after it (`src/jobs/jobs.ts`) plus its Pi extension (`extension.ts`). Other modules import only those two files.
+- A module is a folder under `src/`. Its public surface is the file named after it (`src/jobs/jobs.ts`) plus its Pi extension (`extension.ts`). Other modules import only those two files, through the aliases in `package.json` `imports`: `#jobs`, `#jobs/extension`, `#shared/<file>`, `#db/<file>`. Aliases cannot reach internal files, so a failing alias import means the code belongs in the public file or the dependency is wrong.
+- Imports within a module stay relative. Pi worker extensions in `src/jobs/worker/` import no Crumble code; Pi loads them with its own loader, which is untested with aliases.
 - A module owns its tables. Only its own classes read or write them.
 - Dependencies point one way, in the order listed in `docs/modules.md`. `main.ts` and `host/tenant-process.ts` wire modules together.
 - `src/shared/` holds helpers with no domain knowledge and imports no module.
@@ -43,7 +44,7 @@ Crumble runs on Bun and uses Node built-ins (`node:sqlite`, `node:child_process`
 
 ## Tests
 
-Tests live in `test/`, mirroring `src/` (`src/channels/discord.ts` is tested by `test/channels/discord.test.ts`). Tests that span modules sit at the `test/` root. Test helpers go in `test/support/`. Source folders hold source only.
+Tests live in `test/`, mirroring `src/` (`src/channels/discord.ts` is tested by `test/channels/discord.test.ts`). Tests that span modules sit at the `test/` root. Tests import public files through aliases and internals by relative path. Test helpers go in `test/support/`. Source folders hold source only.
 
 ## Verify
 

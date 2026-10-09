@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { describeJob, type JobStore } from "./jobs.ts";
 import { resolveWorkspacePath, type RunnerDirs } from "./runner.ts";
 import type { Supervisor } from "./supervisor.ts";
-import { toolResult } from "../shared/tool-result.ts";
+import { toolResult } from "#shared/tool-result";
 
 export interface JobsExtensionOptions {
 	supervisor: Supervisor;

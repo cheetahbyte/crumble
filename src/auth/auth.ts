@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { tenantEnvironment, type TenantConfig } from "../tenants/tenants.ts";
+import { tenantEnvironment, type TenantConfig } from "#tenants";
 
 type AuthType = Parameters<ModelRuntime["login"]>[1];
 type AuthInteraction = Parameters<ModelRuntime["login"]>[2];

@@ -2,6 +2,12 @@
   "name": "crumble",
   "private": true,
   "type": "module",
+  "imports": {
+    "#shared/*": "./src/shared/*.ts",
+    "#db/*": "./src/db/*.ts",
+    "#*/extension": "./src/*/extension.ts",
+    "#*": "./src/*/*.ts"
+  },
   "engines": {
     "bun": ">=1.4.0"
   },

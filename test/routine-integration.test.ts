@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { Inbox, InboxProcessor } from "../src/inbox/inbox.ts";
-import { Routines } from "../src/routines/routines.ts";
-import { LearningStore } from "../src/learning/learning.ts";
-import { jobsExtension } from "../src/jobs/extension.ts";
-import { openDatabase } from "../src/db/database.ts";
+import { Inbox, InboxProcessor } from "#inbox";
+import { Routines } from "#routines";
+import { LearningStore } from "#learning";
+import { jobsExtension } from "#jobs/extension";
+import { openDatabase } from "#db/database";
 
 test("quiet routine results remain searchable while ordinary replies cannot be suppressed", async () => {
 	const root = mkdtempSync(join(tmpdir(), "crumble-routine-integration-"));

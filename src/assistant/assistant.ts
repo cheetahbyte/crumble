@@ -2,20 +2,20 @@ import { join } from "node:path";
 import {
 	type AgentSession, createAgentSession, DefaultResourceLoader, type ExtensionFactory, ModelRuntime, SessionManager, SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { BrowserManager } from "../browser/browser.ts";
-import { browserExtension } from "../browser/extension.ts";
-import { type AssistantReply, type InboundRequest, isStopRequest } from "../inbox/inbox.ts";
-import { describeJob, type JobStore, type Supervisor } from "../jobs/jobs.ts";
-import { jobsExtension } from "../jobs/extension.ts";
-import type { LearningStore } from "../learning/learning.ts";
-import { learningExtension } from "../learning/extension.ts";
-import type { MemoryStore } from "../memory/memory.ts";
-import { memoryContext, memoryExtension } from "../memory/extension.ts";
-import type { PluginManager } from "../plugins/plugins.ts";
-import { pluginsExtension } from "../plugins/extension.ts";
-import type { Routines } from "../routines/routines.ts";
-import { routinesExtension } from "../routines/extension.ts";
-import type { TenantConfig } from "../tenants/tenants.ts";
+import type { BrowserManager } from "#browser";
+import { browserExtension } from "#browser/extension";
+import { type AssistantReply, type InboundRequest, isStopRequest } from "#inbox";
+import { describeJob, type JobStore, type Supervisor } from "#jobs";
+import { jobsExtension } from "#jobs/extension";
+import type { LearningStore } from "#learning";
+import { learningExtension } from "#learning/extension";
+import type { MemoryStore } from "#memory";
+import { memoryContext, memoryExtension } from "#memory/extension";
+import type { PluginManager } from "#plugins";
+import { pluginsExtension } from "#plugins/extension";
+import type { Routines } from "#routines";
+import { routinesExtension } from "#routines/extension";
+import type { TenantConfig } from "#tenants";
 
 const PROMPT = [
 	"You are Crumble, this person's persistent personal assistant. Help with any task, not only coding.",

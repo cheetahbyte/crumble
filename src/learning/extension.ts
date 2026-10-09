@@ -1,8 +1,8 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { containsSecret } from "../shared/secrets.ts";
+import { containsSecret } from "#shared/secrets";
 import type { LearningStore } from "./learning.ts";
-import { toolResult } from "../shared/tool-result.ts";
+import { toolResult } from "#shared/tool-result";
 
 const MAX_TRANSCRIPT_OUTPUT = 50_000;
 const MAX_INDEX_SKILLS = 20;

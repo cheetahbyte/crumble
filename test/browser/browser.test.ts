@@ -4,7 +4,7 @@ import { chmod, lstat, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { BrowserManager } from "../../src/browser/browser.ts";
+import { BrowserManager } from "#browser";
 
 test("tenant browser profile rejects a symlink", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "crumble-browser-profile-"));

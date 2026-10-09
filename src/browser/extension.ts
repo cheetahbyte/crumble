@@ -1,7 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { BrowserManager } from "./browser.ts";
-import { toolResult } from "../shared/tool-result.ts";
+import { toolResult } from "#shared/tool-result";
 
 const locatorSchema = Type.Union([
 	Type.Object({ by: Type.Literal("role"), role: Type.String({ maxLength: 80 }), name: Type.Optional(Type.String({ maxLength: 256 })), exact: Type.Optional(Type.Boolean()) }),

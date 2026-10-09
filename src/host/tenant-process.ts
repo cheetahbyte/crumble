@@ -1,14 +1,14 @@
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { TenantAssistant } from "../assistant/assistant.ts";
-import { BrowserManager } from "../browser/browser.ts";
-import { openDatabase } from "../db/database.ts";
-import { Inbox, InboxProcessor } from "../inbox/inbox.ts";
-import { createRunner, describeJob, JobStore, Supervisor } from "../jobs/jobs.ts";
-import { LearningStore } from "../learning/learning.ts";
-import { MemoryStore } from "../memory/memory.ts";
-import { PluginManager } from "../plugins/plugins.ts";
-import { Routines } from "../routines/routines.ts";
+import { TenantAssistant } from "#assistant";
+import { BrowserManager } from "#browser";
+import { openDatabase } from "#db/database";
+import { Inbox, InboxProcessor } from "#inbox";
+import { createRunner, describeJob, JobStore, Supervisor } from "#jobs";
+import { LearningStore } from "#learning";
+import { MemoryStore } from "#memory";
+import { PluginManager } from "#plugins";
+import { Routines } from "#routines";
 import type { ParentMessage, TenantMessage } from "./protocol.ts";
 
 let db: DatabaseSync | undefined;

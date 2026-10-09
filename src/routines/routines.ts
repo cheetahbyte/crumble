@@ -2,10 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { InferSelectModel } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
-import { transaction } from "../db/database.ts";
-import type { assistantSchedules } from "../db/assistant-schema.ts";
-import { type Inbox, type InboundSource, validateId, validateSource, validateText } from "../inbox/inbox.ts";
-import { validateTimezone } from "../shared/paths.ts";
+import { transaction } from "#db/database";
+import type { assistantSchedules } from "#db/assistant-schema";
+import { type Inbox, type InboundSource, validateId, validateSource, validateText } from "#inbox";
+import { validateTimezone } from "#shared/paths";
 
 export interface ScheduleInput {
 	id?: string;

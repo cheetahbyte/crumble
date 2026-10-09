@@ -2,8 +2,8 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
-import { isWithin, rejectSymlink, SLUG } from "../shared/paths.ts";
-import { type TenantConfig, tenantEnvironment } from "../tenants/tenants.ts";
+import { isWithin, rejectSymlink, SLUG } from "#shared/paths";
+import { type TenantConfig, tenantEnvironment } from "#tenants";
 
 export interface WorkerRunner {
 	sessionDir(job: Job): string;

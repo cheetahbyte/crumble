@@ -1,6 +1,6 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { toolResult } from "../shared/tool-result.ts";
+import { toolResult } from "#shared/tool-result";
 import type { PluginManager } from "./plugins.ts";
 
 export function pluginsExtension(plugins: PluginManager): ExtensionFactory {
