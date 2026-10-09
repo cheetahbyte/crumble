@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { createTenantConfig, type TenantConfig, validateTenants } from "#tenants";
+import { validateMcpServers } from "#mcp";
+import { createTenantConfig, type TenantConfig, type TenantInput, validateTenants } from "#tenants";
 import { Type, type Static } from "typebox";
 import { Value } from "typebox/value";
 
@@ -25,6 +26,7 @@ const RawTenantSchema = Type.Object({
 	provider: Type.Optional(Type.String()),
 	model: Type.Optional(Type.String()),
 	timezone: Type.Optional(Type.String()),
+	mcpServers: Type.Optional(Type.Unknown()),
 }, { additionalProperties: true });
 const RawAppConfigSchema = Type.Object({
 	dataDir: Type.Optional(Type.String()),
@@ -35,7 +37,7 @@ const RawAppConfigSchema = Type.Object({
 	tenants: Type.Optional(Type.Array(RawTenantSchema)),
 }, { additionalProperties: true });
 
-type RawAppConfig = Static<typeof RawAppConfigSchema>;
+type RawAppConfig = Omit<Static<typeof RawAppConfigSchema>, "tenants"> & { tenants?: TenantInput[] };
 
 function nonEmptyString(value: unknown, label: string): string | undefined {
 	if (value === undefined) return undefined;
@@ -69,6 +71,7 @@ function parseConfig(path: string): RawAppConfig {
 			provider: nonEmptyString(tenant.provider, `tenants[${index}].provider`),
 			model: nonEmptyString(tenant.model, `tenants[${index}].model`),
 			timezone: nonEmptyString(tenant.timezone, `tenants[${index}].timezone`),
+			mcpServers: tenant.mcpServers === undefined ? undefined : validateMcpServers(tenant.mcpServers, `tenants[${index}].mcpServers`),
 		};
 	});
 	const runner = raw.runner;

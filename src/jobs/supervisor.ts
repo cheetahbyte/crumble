@@ -13,6 +13,7 @@ const WORKER_PROMPT = [
 ].join("\n");
 
 const ASK_EXTENSION = join(import.meta.dirname, "worker", "ask.ts");
+const MCP_EXTENSION = join(import.meta.dirname, "worker", "mcp.ts");
 
 export interface SupervisorOptions {
 	store: JobStore;
@@ -149,8 +150,10 @@ export class Supervisor {
 					"--provider", provider,
 					"--model", model,
 					"--no-extensions", "--no-skills", "--no-prompt-templates", "--no-approve",
-					"--tools", "read,bash,edit,write,ask",
+					// An allowlist would also hide MCP tools, so exclude the built-ins the sandbox does not wrap.
+					"--exclude-tools", "grep,find,ls,powershell",
 					"-e", ASK_EXTENSION,
+					"-e", "builtin:codemode", "-e", "builtin:tool-search", "-e", MCP_EXTENSION,
 					"--append-system-prompt", WORKER_PROMPT,
 				]),
 				{ closeGraceMs },

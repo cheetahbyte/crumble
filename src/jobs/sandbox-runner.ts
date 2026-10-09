@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
 import { assertScopedPath, prepareSessionDir, resolveWorkspacePath, type RunnerDirs, type WorkerRunner, workerEnvironment } from "./runner.ts";
+import { hasLocalServers, type McpServers, sandboxMcpServers } from "#mcp";
 import { rejectSymlink } from "#shared/paths";
 import { piCliArgs } from "#shared/pi-command";
 
@@ -91,7 +92,19 @@ export class SandboxRunner implements WorkerRunner {
 		const workspace = resolveWorkspacePath(this.dirs, job.project);
 		const container = containerName(this.dirs, workspace, job.project);
 		ensureSandbox(container, workspace, resolveSandboxHome(this.dirs), this.image);
-		const env = workerEnvironment(this.dirs, { CRUMBLE_SANDBOX_CONTAINER: container });
+		const env = workerEnvironment(this.dirs, sandboxMcpServers(this.dirs.mcpServers, container), { CRUMBLE_SANDBOX_CONTAINER: container });
 		return spawn(process.execPath, [...piCliArgs, ...piArgs, "-e", SANDBOX_EXTENSION], { cwd: workspace, env });
+	}
+
+	/** The assistant's local servers share one sandbox over all of the tenant's workspaces. */
+	assistantMcpServers(): McpServers {
+		const servers = this.dirs.mcpServers;
+		if (!hasLocalServers(servers)) return servers;
+		rejectSymlink(this.dirs.workspacesDir, "Tenant workspaces directory");
+		mkdirSync(this.dirs.workspacesDir, { recursive: true, mode: 0o700 });
+		const workspaces = assertScopedPath(this.dirs.rootDir, this.dirs.workspacesDir, "Workspace directory");
+		const container = containerName(this.dirs, workspaces, "assistant");
+		ensureSandbox(container, workspaces, resolveSandboxHome(this.dirs), this.image);
+		return sandboxMcpServers(servers, container);
 	}
 }

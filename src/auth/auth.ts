@@ -1,6 +1,10 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { emitKeypressEvents } from "node:readline";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { mcpEnvironment } from "#mcp";
+import { piCliArgs } from "#shared/pi-command";
 import { tenantEnvironment, type TenantConfig } from "#tenants";
 
 type AuthType = Parameters<ModelRuntime["login"]>[1];
@@ -146,5 +150,25 @@ function showAuthEvent(event: Parameters<AuthInteraction["notify"]>[0]): void {
 				for (const link of event.links ?? []) console.log(`${link.label ?? "More information"}: ${link.url}`);
 			}
 			break;
+	}
+}
+
+/**
+ * Sign in to a remote MCP server with `pi mcp login`. That command only reads `mcp.json`, so the server
+ * is listed there for the duration; Pi keys the stored login by name and URL, which Crumble reuses.
+ */
+export function runMcpLogin(tenant: TenantConfig, name: string): boolean {
+	const config = tenant.mcpServers[name];
+	if (!config || !("url" in config)) throw new Error(`Tenant ${tenant.id} has no remote MCP server named ${name}`);
+	const file = join(tenant.agentDir, "mcp.json");
+	if (existsSync(file)) throw new Error(`${file} already exists; move it aside before signing in`);
+	writeFileSync(file, JSON.stringify({ mcpServers: { [name]: config } }), { flag: "wx", mode: 0o600 });
+	try {
+		const result = spawnSync(process.execPath, [...piCliArgs, "mcp", "login", name], {
+			cwd: tenant.homeDir, stdio: "inherit", env: { ...tenantEnvironment(tenant), ...mcpEnvironment(tenant.mcpServers) },
+		});
+		return result.status === 0;
+	} finally {
+		unlinkSync(file);
 	}
 }

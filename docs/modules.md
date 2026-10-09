@@ -10,6 +10,7 @@ Listed from the bottom of the dependency graph to the top. A module imports only
 | --- | --- | --- | --- |
 | `shared` | any file | none | Helpers with no domain knowledge: paths, secrets, text checks, tool results |
 | `db` | `database.ts` | schema files | Opens and migrates tenant databases |
+| `mcp` | `mcp.ts` | none | MCP server config, secret forwarding, and sandbox wrapping for local servers |
 | `tenants` | `tenants.ts` | none | Tenant config and directories |
 | `config` | `config.ts` | none | Loads `crumble.config.json` |
 | `auth` | `auth.ts` | none | Model login per tenant |

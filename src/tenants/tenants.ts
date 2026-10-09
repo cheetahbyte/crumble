@@ -1,5 +1,6 @@
 import { lstatSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import type { McpServers } from "#mcp";
 import { rejectSymlink, SLUG, validateTimezone } from "#shared/paths";
 
 export interface TenantInput {
@@ -8,12 +9,14 @@ export interface TenantInput {
 	provider?: string;
 	model?: string;
 	timezone?: string;
+	mcpServers?: McpServers;
 }
 
 export interface TenantConfig extends TenantInput {
 	provider: string;
 	model: string;
 	timezone: string;
+	mcpServers: McpServers;
 	rootDir: string;
 	homeDir: string;
 	agentDir: string;
@@ -64,6 +67,7 @@ export function createTenantConfig(dataDir: string, input: TenantInput, defaults
 		provider: input.provider ?? defaults.provider,
 		model: input.model ?? defaults.model,
 		timezone,
+		mcpServers: input.mcpServers ?? {},
 		rootDir,
 		homeDir: join(rootDir, "home"),
 		agentDir: join(rootDir, "agent"),
@@ -110,6 +114,7 @@ export function prepareTenant(tenant: TenantConfig): void {
 		join(tenant.agentDir, "settings.json"),
 		join(tenant.agentDir, "models.json"),
 		join(tenant.agentDir, "models-cache.json"),
+		join(tenant.agentDir, "mcp-auth.json"),
 	]) {
 		rejectSymlink(path, `Tenant file ${path}`);
 	}

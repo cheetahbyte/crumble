@@ -91,6 +91,30 @@ Each tenant's sandboxes share one persistent home directory, stored on the host 
 
 To let workers use Claude Code, ask Crumble to install it (`npm install -g @anthropic-ai/claude-code`). Then sign in once from a running sandbox container of that tenant: find it with `docker ps --filter name=crumble-sandbox-TENANT_ID`, run `docker exec -it CONTAINER_NAME claude`, and complete the login. The login is stored in the shared home directory.
 
+## Connect MCP servers
+
+Add a tenant's [MCP](https://modelcontextprotocol.io) servers under `mcpServers` in its `crumble.config.json` entry. The format matches Pi's `mcp.json`, so entries from Claude Code, Cursor, or Pi copy over. The assistant and its workers both get the tools.
+
+```json
+{
+  "id": "alex",
+  "mcpServers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": { "Authorization": "Bearer ${GITHUB_TOKEN}" }
+    },
+    "sentry": { "url": "https://mcp.sentry.dev/mcp" },
+    "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] }
+  }
+}
+```
+
+- Remote servers (`url`) connect from the host. Set the variables that `${NAME}` references in the service environment; Crumble passes only those to the tenant.
+- Local servers (`command`) run inside the tenant's sandbox through `docker exec`. Workers use their job's container; the assistant uses one container over all of the tenant's workspaces, mounted at `/workspace`. Install what a server needs (`uvx`, `npx` packages) in the sandbox home directory, and give `cwd` as a container path. With the `host` runner, local servers run on the host.
+- Sign in to an OAuth server with `bun run auth --tenant TENANT_ID --mcp SERVER_NAME`. The login is stored in the tenant's Pi directory.
+
+Tools are reached through Pi's codemode by default. Set `"exposure": "direct"` on small, frequently used servers to declare their tools to the model. See Pi's MCP documentation for `exposure`, `toolExposure`, and OAuth options.
+
 ## Use Crumble
 
 Send a request in a Discord direct message. Crumble handles ordinary conversation and delegates work that needs research, code, files, shell commands, or a new capability.

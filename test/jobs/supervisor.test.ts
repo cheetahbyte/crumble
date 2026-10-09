@@ -20,6 +20,7 @@ function setup(options: { maxConcurrency?: number; timeoutMs?: number; spawnErro
 			if (options.spawnError) throw new Error("spawn failed");
 			return spawn(process.execPath, [fakeWorker]);
 		},
+		assistantMcpServers: () => ({}),
 	};
 	const supervisor = new Supervisor({
 		store,

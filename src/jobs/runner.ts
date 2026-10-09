@@ -2,15 +2,18 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
+import { mcpEnvironment, type McpServers } from "#mcp";
 import { isWithin, rejectSymlink, SLUG } from "#shared/paths";
 import { type TenantConfig, tenantEnvironment } from "#tenants";
 
 export interface WorkerRunner {
 	sessionDir(job: Job): string;
 	spawn(job: Job, piArgs: string[]): ChildProcessWithoutNullStreams;
+	/** The tenant's MCP servers as the assistant should start them. */
+	assistantMcpServers(): McpServers;
 }
 
-export type RunnerDirs = Pick<TenantConfig, "id" | "rootDir" | "homeDir" | "agentDir" | "jobsDir" | "workspacesDir">;
+export type RunnerDirs = Pick<TenantConfig, "id" | "rootDir" | "homeDir" | "agentDir" | "jobsDir" | "workspacesDir" | "mcpServers">;
 
 export function assertScopedPath(root: string, path: string, label: string): string {
 	const actual = realpathSync(path);
@@ -48,7 +51,7 @@ export function prepareSessionDir(dirs: RunnerDirs, job: Job): string {
 	return actual;
 }
 
-/** Pass only execution essentials and tenant-local Pi/HOME locations to workers. */
-export function workerEnvironment(dirs: RunnerDirs, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-	return { ...tenantEnvironment(dirs), ...extra };
+/** Pass only execution essentials, tenant-local Pi/HOME locations, and the worker's MCP servers. */
+export function workerEnvironment(dirs: RunnerDirs, servers: McpServers, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+	return { ...tenantEnvironment(dirs), ...mcpEnvironment(servers), CRUMBLE_MCP_SERVERS: JSON.stringify(servers), ...extra };
 }

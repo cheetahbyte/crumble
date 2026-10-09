@@ -73,13 +73,15 @@ process.on("message", (message: ParentMessage) => {
 		inbox.recoverInterrupted();
 		learning = new LearningStore(db);
 		jobs = new JobStore(tenant.jobsDatabasePath);
+		const runner = createRunner(tenant, app);
 		supervisor = new Supervisor({
-			store: jobs, runner: createRunner(tenant, app),
+			store: jobs, runner,
 			provider: tenant.provider, model: tenant.model, onSettled: () => wake(),
 		});
 		supervisor.recoverInterrupted();
 		assistant = new TenantAssistant({
 			tenant, routines, jobs, supervisor, learning, memory: new MemoryStore(db),
+			mcpServers: () => runner.assistantMcpServers(),
 			browser: new BrowserManager({ tenantId: tenant.id, rootDir: tenant.rootDir }),
 			plugins: new PluginManager({
 				db, rootDir: join(tenant.rootDir, "plugins"), workspacesDir: tenant.workspacesDir,

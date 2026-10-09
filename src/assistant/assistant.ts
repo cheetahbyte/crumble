@@ -9,6 +9,8 @@ import { describeJob, type JobStore, type Supervisor } from "#jobs";
 import { jobsExtension } from "#jobs/extension";
 import type { LearningStore } from "#learning";
 import { learningExtension } from "#learning/extension";
+import type { McpServers } from "#mcp";
+import { mcpExtensions } from "#mcp/extension";
 import type { MemoryStore } from "#memory";
 import { memoryContext, memoryExtension } from "#memory/extension";
 import type { PluginManager } from "#plugins";
@@ -44,6 +46,8 @@ export interface AssistantOptions {
 	browser: BrowserManager;
 	memory: MemoryStore;
 	learning: LearningStore;
+	/** Called when the session starts, so a sandbox failure fails that turn instead of tenant startup. */
+	mcpServers?: () => McpServers;
 	turnTimeoutMs?: number;
 }
 
@@ -131,6 +135,7 @@ export class TenantAssistant {
 		});
 		const model = modelRuntime.getModel(tenant.provider, tenant.model);
 		if (!model) throw new Error(`Model ${tenant.provider}/${tenant.model} is unavailable. Update this tenant's model configuration.`);
+		const mcpServers = this.options.mcpServers?.() ?? {};
 		const settingsManager = SettingsManager.inMemory({ retry: { enabled: true, maxRetries: 2 } });
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: tenant.homeDir, agentDir: tenant.agentDir, settingsManager,
@@ -148,6 +153,7 @@ export class TenantAssistant {
 				browserExtension(browser),
 				routinesExtension({ routines, timezone: tenant.timezone, currentRequest: () => this.currentRequest,
 					setOutcome: (outcome) => { this.routineOutcome = outcome; } }),
+				...mcpExtensions(mcpServers),
 			],
 		});
 		await resourceLoader.reload();

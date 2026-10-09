@@ -19,6 +19,7 @@ function withDirs(fn: (base: string, dirs: RunnerDirs) => void): void {
 		agentDir: join(tenantRoot, "agent"),
 		jobsDir: join(tenantRoot, "jobs"),
 		workspacesDir: join(tenantRoot, "workspaces"),
+		mcpServers: {},
 	};
 	try {
 		fn(base, dirs);
@@ -84,7 +85,7 @@ test("sandbox identity includes tenant scope and full workspace location", () =>
 
 test("worker environment carries tenant Pi paths and omits host/service secrets", () => {
 	withDirs((_base, dirs) => {
-		const env = workerEnvironment(dirs);
+		const env = workerEnvironment(dirs, dirs.mcpServers);
 		assert.equal(env.HOME, dirs.homeDir);
 		assert.equal(env.PI_CODING_AGENT_DIR, dirs.agentDir);
 		assert.equal(env.OPENAI_API_KEY, undefined);

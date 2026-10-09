@@ -7,6 +7,7 @@ import { openDatabase } from "#db/database";
 import { Inbox, type InboundSource, isStopRequest } from "#inbox";
 import { Routines } from "#routines";
 import type { ParentMessage, TenantMessage } from "./protocol.ts";
+import { mcpEnvironment } from "#mcp";
 import { tenantEnvironment, type TenantConfig } from "#tenants";
 
 export interface TenantHostOptions {
@@ -43,7 +44,7 @@ export class TenantHost {
 		if (this.stopping) return;
 		const { config, channel } = this.options;
 		const child = fork(join(import.meta.dirname, "tenant-process.ts"), [], {
-			cwd: config.homeDir, env: tenantEnvironment(config),
+			cwd: config.homeDir, env: { ...tenantEnvironment(config), ...mcpEnvironment(config.mcpServers) },
 			// Bun would otherwise load a .env from the tenant home directory.
 			execArgv: ["--no-env-file"],
 			stdio: ["ignore", "ignore", "pipe", "ipc"],
