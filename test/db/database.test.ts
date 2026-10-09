@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { openDatabase, type DatabaseKind } from "./database.ts";
+import { openDatabase, type DatabaseKind } from "../../src/db/database.ts";
 
 function withDirectory(run: (directory: string) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-db-migrations-"));

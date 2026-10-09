@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { test } from "node:test";
-import { PiRpc, splitRecords } from "./rpc.ts";
+import { PiRpc, splitRecords } from "../src/rpc.ts";
 
 test("splitRecords keeps a partial record for the next chunk", () => {
 	const first = splitRecords("", '{"a":1}\n{"b"');

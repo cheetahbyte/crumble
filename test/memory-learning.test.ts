@@ -4,8 +4,8 @@ import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { LearningStore } from "./learning.ts";
-import { openDatabase } from "./db/database.ts";
+import { LearningStore } from "../src/learning.ts";
+import { openDatabase } from "../src/db/database.ts";
 
 test("memory revisions persist and rollback restores successive prior saves", () => {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-memory-revisions-"));

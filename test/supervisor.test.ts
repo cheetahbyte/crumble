@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { test } from "node:test";
-import { type Job, JobStore } from "./jobs.ts";
-import type { WorkerRunner } from "./runners.ts";
-import { Supervisor } from "./supervisor.ts";
+import { type Job, JobStore } from "../src/jobs.ts";
+import type { WorkerRunner } from "../src/runners.ts";
+import { Supervisor } from "../src/supervisor.ts";
 
-const fakeWorker = join(import.meta.dirname, "testing", "fake-worker.ts");
+const fakeWorker = join(import.meta.dirname, "support", "fake-worker.ts");
 
 function setup(options: { maxConcurrency?: number; timeoutMs?: number; spawnError?: boolean; onSettled?: (job: Job) => void } = {}) {
 	const store = new JobStore(":memory:");

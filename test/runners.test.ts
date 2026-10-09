@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import type { Job } from "./jobs.ts";
-import { containerName, hostRunner, resolveWorkspacePath, workerEnvironment, type RunnerDirs } from "./runners.ts";
+import type { Job } from "../src/jobs.ts";
+import { containerName, hostRunner, resolveWorkspacePath, workerEnvironment, type RunnerDirs } from "../src/runners.ts";
 
 function withDirs(fn: (base: string, dirs: RunnerDirs) => void): void {
 	const base = mkdtempSync(join(tmpdir(), "crumble-runner-"));

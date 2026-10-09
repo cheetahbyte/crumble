@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { InboxProcessor } from "./inbox.ts";
-import { AssistantState } from "./state.ts";
-import { openDatabase } from "./db/database.ts";
+import { InboxProcessor } from "../src/inbox.ts";
+import { AssistantState } from "../src/state.ts";
+import { openDatabase } from "../src/db/database.ts";
 
 test("concurrent wakes serialize turns and drain arrivals during a running turn", async () => {
 	const stateDb = openDatabase(":memory:", "assistant");

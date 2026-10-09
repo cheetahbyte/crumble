@@ -12,7 +12,7 @@
     "doctor": "node --env-file-if-exists=.env scripts/doctor.ts",
     "spike": "node scripts/spike.ts",
     "check": "tsc --noEmit",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --test \"test/**/*.test.ts\"",
     "sandbox:build": "docker build -t crumble-sandbox -f docker/Dockerfile.sandbox docker",
     "browser:build": "docker build -t crumble-browser -f docker/Dockerfile.browser docker",
     "db:generate": "drizzle-kit generate --config=drizzle.assistant.config.ts && drizzle-kit generate --config=drizzle.jobs.config.ts",

@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import sandboxExtension, { runSandboxBash, workspacePath } from "./sandbox.ts";
+import sandboxExtension, { runSandboxBash, workspacePath } from "../../src/worker/sandbox.ts";
 
 test("workspace path mapping enforces a path component boundary", () => {
 	assert.equal(workspacePath("/work/crumble", "/work/crumble/src/main.ts"), "/workspace/src/main.ts");

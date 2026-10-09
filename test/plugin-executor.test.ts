@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { dockerPluginExecutor } from "./plugin-executor.ts";
+import { dockerPluginExecutor } from "../src/plugin-executor.ts";
 
 async function fakeDocker(source: string): Promise<{ base: string; restore: () => void }> {
 	const base = await mkdtemp(join(tmpdir(), "crumble-execa-docker-"));

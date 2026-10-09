@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { LearningStore } from "./learning.ts";
-import { AssistantState } from "./state.ts";
-import { openDatabase } from "./db/database.ts";
+import { LearningStore } from "../src/learning.ts";
+import { AssistantState } from "../src/state.ts";
+import { openDatabase } from "../src/db/database.ts";
 
 function withState(run: (state: AssistantState, directory: string) => void): void {
 	const directory = mkdtempSync(join(tmpdir(), "crumble-state-"));

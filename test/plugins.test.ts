@@ -3,9 +3,9 @@ import { access, chmod, mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
-import { openDatabase } from "./db/database.ts";
-import { PluginManager } from "./plugins.ts";
-import { dockerPluginExecutor } from "./plugin-executor.ts";
+import { openDatabase } from "../src/db/database.ts";
+import { PluginManager } from "../src/plugins.ts";
+import { dockerPluginExecutor } from "../src/plugin-executor.ts";
 
 async function fixture() {
 	const base = await mkdtemp(join(tmpdir(), "crumble-plugins-"));

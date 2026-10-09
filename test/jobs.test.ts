@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { JobStore } from "./jobs.ts";
+import { JobStore } from "../src/jobs.ts";
 
 test("running jobs recover as explicitly resumable interruptions without replay", () => {
 	const dir = mkdtempSync(join(tmpdir(), "crumble-jobs-"));

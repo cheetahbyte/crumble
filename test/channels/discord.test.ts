@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Events } from "discord.js";
-import { createDiscordChannel } from "./discord.ts";
+import { createDiscordChannel } from "../../src/channels/discord.ts";
 
 type Listener = (...args: never[]) => void;
 
