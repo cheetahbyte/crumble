@@ -3,16 +3,16 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "bun": ">=1.4.0"
   },
   "scripts": {
-    "start": "node --env-file-if-exists=.env src/main.ts",
-    "service": "node --env-file-if-exists=.env src/main.ts",
-    "auth": "node scripts/auth.ts",
-    "doctor": "node --env-file-if-exists=.env scripts/doctor.ts",
-    "spike": "node scripts/spike.ts",
+    "start": "bun src/main.ts",
+    "service": "bun src/main.ts",
+    "auth": "bun --no-env-file scripts/auth.ts",
+    "doctor": "bun scripts/doctor.ts",
+    "spike": "bun --no-env-file scripts/spike.ts",
     "check": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\"",
+    "test": "bun --no-env-file test test/",
     "sandbox:build": "docker build -t crumble-sandbox -f docker/Dockerfile.sandbox docker",
     "browser:build": "docker build -t crumble-browser -f docker/Dockerfile.browser docker",
     "db:generate": "drizzle-kit generate --config=drizzle.assistant.config.ts && drizzle-kit generate --config=drizzle.jobs.config.ts",

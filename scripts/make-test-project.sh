@@ -3,7 +3,7 @@
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-dir="$(cd "$root" && node --input-type=module -e 'import {loadAppConfig} from "./src/config.ts"; import {prepareTenant} from "./src/tenants.ts"; const config=loadAppConfig(); const tenant=config.tenants.find(t=>t.id===config.selectedTenantId); prepareTenant(tenant); process.stdout.write(tenant.workspacesDir);')/demo"
+dir="$(cd "$root" && bun --no-env-file -e 'import {loadAppConfig} from "./src/config/config.ts"; import {prepareTenant} from "./src/tenants/tenants.ts"; const config=loadAppConfig(); const tenant=config.tenants.find(t=>t.id===config.selectedTenantId); prepareTenant(tenant); process.stdout.write(tenant.workspacesDir);')/demo"
 if [ -e "$dir" ]; then
   echo "$dir already exists" >&2
   exit 1

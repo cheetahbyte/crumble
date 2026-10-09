@@ -6,11 +6,11 @@ const app = loadAppConfig();
 const args = process.argv.slice(2).filter((arg) => arg !== "--");
 const tenantArg = args.indexOf("--tenant");
 const id = tenantArg >= 0 ? args[tenantArg + 1] : undefined;
-if (!id || id.startsWith("--")) throw new Error("Usage: pnpm auth --tenant <tenant-id> [--method oauth|api_key]");
+if (!id || id.startsWith("--")) throw new Error("Usage: bun run auth --tenant <tenant-id> [--method oauth|api_key]");
 const methodArg = args.indexOf("--method");
 const method = methodArg < 0 ? undefined : args[methodArg + 1];
 if (methodArg >= 0 && (!method || method.startsWith("--"))) {
-	throw new Error('Usage: pnpm auth --tenant <tenant-id> [--method oauth|api_key]');
+	throw new Error('Usage: bun run auth --tenant <tenant-id> [--method oauth|api_key]');
 }
 if (method !== undefined && method !== "oauth" && method !== "api_key") {
 	throw new Error('Authentication method must be "oauth" or "api_key"');

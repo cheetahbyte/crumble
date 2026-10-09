@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import type { Job } from "./jobs.ts";
 import { assertScopedPath, prepareSessionDir, resolveWorkspacePath, type RunnerDirs, type WorkerRunner, workerEnvironment } from "./runner.ts";
 import { rejectSymlink } from "../shared/paths.ts";
-import { piCli } from "../shared/pi-command.ts";
+import { piCliArgs } from "../shared/pi-command.ts";
 
 const SANDBOX_EXTENSION = join(import.meta.dirname, "worker", "sandbox.ts");
 
@@ -92,6 +92,6 @@ export class SandboxRunner implements WorkerRunner {
 		const container = containerName(this.dirs, workspace, job.project);
 		ensureSandbox(container, workspace, resolveSandboxHome(this.dirs), this.image);
 		const env = workerEnvironment(this.dirs, { CRUMBLE_SANDBOX_CONTAINER: container });
-		return spawn(process.execPath, [piCli, ...piArgs, "-e", SANDBOX_EXTENSION], { cwd: workspace, env });
+		return spawn(process.execPath, [...piCliArgs, ...piArgs, "-e", SANDBOX_EXTENSION], { cwd: workspace, env });
 	}
 }

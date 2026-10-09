@@ -157,7 +157,8 @@ export class PiRpc {
 
 	private write(record: RpcRecord): void {
 		if (this.child.stdin.destroyed || this.child.stdin.writableEnded) {
-			this.fail(new Error("worker stdin is closed"));
+			// Bun closes stdin before a failed spawn emits its error; let that error report the cause.
+			if (this.child.pid !== undefined) this.fail(new Error("worker stdin is closed"));
 			return;
 		}
 		try {

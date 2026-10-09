@@ -44,8 +44,8 @@ export class TenantHost {
 		const { config, channel } = this.options;
 		const child = fork(join(import.meta.dirname, "tenant-process.ts"), [], {
 			cwd: config.homeDir, env: tenantEnvironment(config),
-			// Do not inherit Node --env-file flags that could reload the bot's secrets.
-			execArgv: [],
+			// Bun would otherwise load a .env from the tenant home directory.
+			execArgv: ["--no-env-file"],
 			stdio: ["ignore", "ignore", "pipe", "ipc"],
 		});
 		this.child = child;

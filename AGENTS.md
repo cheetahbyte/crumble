@@ -31,11 +31,15 @@ Capabilities plug in at these seams. Put new behaviour behind an existing seam b
 
 Model requests go through Pi itself. No credential proxies or non-Pi clients.
 
+## Runtime
+
+Crumble runs on Bun and uses Node built-ins (`node:sqlite`, `node:child_process`, `node:test`) through Bun's compatibility layer. Bun loads `.env` from the working directory by default, so every Bun process Crumble starts passes `--no-env-file`: the tenant `fork` in `src/host/host.ts` and Pi workers through `piCliArgs` in `src/shared/pi-command.ts`.
+
 ## Code style
 
 - A class when there is state or a pluggable role; a plain function for stateless helpers.
 - One concept per file, named after it.
-- Persistence lives in SQLite through Drizzle (`src/db/`). Change a schema, then run `pnpm db:generate`.
+- Persistence lives in SQLite through Drizzle (`src/db/`). Change a schema, then run `bun run db:generate`.
 
 ## Tests
 
@@ -43,4 +47,4 @@ Tests live in `test/`, mirroring `src/` (`src/channels/discord.ts` is tested by 
 
 ## Verify
 
-Run `pnpm check` and `pnpm test` before calling a change done. Tests that need Docker images skip when the image is missing; say so when reporting.
+Run `bun run check` and `bun run test` before calling a change done. Use `bun run test`, not bare `bun test`: the script limits discovery to `test/` and skips `.env`. Tests that need Docker images skip when the image is missing; say so when reporting.

@@ -6,8 +6,7 @@ The assistant handles conversation and coordination. A worker performs file and 
 
 ## Requirements
 
-- Node.js 24 or later
-- pnpm
+- Bun 1.4 or later
 - Docker, when you use the default `sandbox` runner
 - A model provider configured through Pi for each tenant
 - A Discord bot token when you want Discord access
@@ -17,14 +16,14 @@ The assistant handles conversation and coordination. A worker performs file and 
 1. Install dependencies:
 
    ```sh
-   pnpm install
+   bun install
    ```
 
 2. Build the worker container image:
 
    ```sh
-   pnpm sandbox:build
-   pnpm browser:build
+   bun run sandbox:build
+   bun run browser:build
    ```
 
 3. Create `crumble.config.json` in the repository root when you want multiple tenants, Discord, or custom settings. The file must list every tenant explicitly. Replace `DISCORD_USER_ID` and `PARTNER_DISCORD_USER_ID` with Discord user IDs. Each value must be a Discord snowflake.
@@ -55,7 +54,7 @@ The assistant handles conversation and coordination. A worker performs file and 
 5. Set up model authentication separately for every tenant. Replace `TENANT_ID` with a configured tenant ID. The command runs an authentication-only flow for that tenant. It does not start Pi's coding agent or terminal UI:
 
    ```sh
-   pnpm auth --tenant TENANT_ID
+   bun run auth --tenant TENANT_ID
    ```
 
    Authentication uses Pi's provider API directly. OAuth is preferred when available; use `--method api_key` to choose API-key login. The setup command exits when login completes. Only the service needs to remain running.
@@ -71,12 +70,12 @@ The assistant handles conversation and coordination. A worker performs file and 
 7. Start the service:
 
    ```sh
-   pnpm start
+   bun run start
    ```
 
-   This runs Discord, schedules, saved request queues, tenant assistants, and background workers. There is no terminal chat or Pi TUI. `pnpm service` is an alias for the same service. Run only one instance per data directory. Use Ctrl+C or SIGTERM for a clean shutdown.
+   This runs Discord, schedules, saved request queues, tenant assistants, and background workers. There is no terminal chat or Pi TUI. `bun run service` is an alias for the same service. Run only one instance per data directory. Use Ctrl+C or SIGTERM for a clean shutdown.
 
-   Without Discord credentials, the service still processes saved requests and schedules. Replies remain queued until their channel is available. `pnpm run doctor` checks Docker, the sandbox image, account mappings, and each tenant's model authentication without printing credentials.
+   Without Discord credentials, the service still processes saved requests and schedules. Replies remain queued until their channel is available. `bun run doctor` checks Docker, the sandbox image, account mappings, and each tenant's model authentication without printing credentials.
 
 ## Configure tenants
 
@@ -174,7 +173,7 @@ If the process stops during an assistant request, Crumble records the request as
 
 Tenant databases migrate automatically when opened. Drizzle schemas in `src/db/assistant-schema.ts` and `src/db/jobs-schema.ts` define the tables, indexes, and constraints. Checked-in SQL migrations live under `drizzle/assistant/` and `drizzle/jobs/`. Existing tenant databases are adopted transactionally, preserving rows and applying the same constraints as new databases. An invalid legacy row causes adoption to roll back and startup to fail with the database error.
 
-To change a schema, edit its TypeScript definition, run `pnpm db:generate`, review the generated SQL, and commit the migration and snapshot together. Use `drizzle-kit generate --config=drizzle.assistant.config.ts --custom --name=CHANGE_NAME` for data backfills, SQLite FTS tables, and triggers. Test both fresh databases and upgrades. Keep applied migrations unchanged; add another migration for subsequent changes. `pnpm db:check` checks migration history consistency.
+To change a schema, edit its TypeScript definition, run `bun run db:generate`, review the generated SQL, and commit the migration and snapshot together. Use `drizzle-kit generate --config=drizzle.assistant.config.ts --custom --name=CHANGE_NAME` for data backfills, SQLite FTS tables, and triggers. Test both fresh databases and upgrades. Keep applied migrations unchanged; add another migration for subsequent changes. `bun run db:check` checks migration history consistency.
 
 The ORM and Kit are pinned to matching `1.0.0-rc.4` releases because the `node:sqlite` adapter is not in Drizzle's stable release yet. Database row types are inferred from the schemas; existing SQL queries continue to use the built-in driver.
 
@@ -185,11 +184,11 @@ Data ownership from the earlier spike is not migrated automatically. Stop Crumbl
 Run the unit tests and TypeScript check:
 
 ```sh
-pnpm test
-pnpm check
-pnpm db:check
+bun run test
+bun run check
+bun run db:check
 ```
 
-The tests use fake Discord clients and workers, plus real local process tests. They do not log in to Discord or contact a live model. A sandbox cancellation test uses Docker when the image is available and skips otherwise. `pnpm spike` runs a separate live model suspend-and-resume experiment in the selected tenant; create its throwaway workspace with `./scripts/make-test-project.sh` first.
+The tests use fake Discord clients and workers, plus real local process tests. They do not log in to Discord or contact a live model. A sandbox cancellation test uses Docker when the image is available and skips otherwise. `bun run spike` runs a separate live model suspend-and-resume experiment in the selected tenant; create its throwaway workspace with `./scripts/make-test-project.sh` first.
 
 Worker shell commands terminate their ordinary background process group when they finish or are cancelled. A host crash or an unreachable Docker daemon can prevent immediate cleanup; the in-container command timeout provides a fallback. A deliberately detached process can escape process-group cleanup. Containers currently persist per tenant workspace, so this is not a per-job container kill boundary.
