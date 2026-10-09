@@ -3,38 +3,39 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { AssistantState } from "../src/state.ts";
-import { InboxProcessor } from "../src/inbox.ts";
-import { LearningStore } from "../src/learning.ts";
-import { delegateExtension } from "../src/extensions/delegate.ts";
+import { Inbox, InboxProcessor } from "../src/inbox/inbox.ts";
+import { Routines } from "../src/routines/routines.ts";
+import { LearningStore } from "../src/learning/learning.ts";
+import { jobsExtension } from "../src/jobs/extension.ts";
 import { openDatabase } from "../src/db/database.ts";
 
 test("quiet routine results remain searchable while ordinary replies cannot be suppressed", async () => {
 	const root = mkdtempSync(join(tmpdir(), "crumble-routine-integration-"));
 	const path = join(root, "assistant.db");
 	const stateDb = openDatabase(path, "assistant");
-	const state = new AssistantState(stateDb);
+	const inbox = new Inbox(stateDb);
+	const routines = new Routines(stateDb, inbox);
 	const learningDb = openDatabase(path, "assistant");
 	const learning = new LearningStore(learningDb);
-	const inbox = new InboxProcessor({ state, changed() {}, handle: async () => ({ text: "Checked inventory: unchanged", notify: false }) });
+	const processor = new InboxProcessor({ inbox, changed() {}, handle: async () => ({ text: "Checked inventory: unchanged", notify: false }) });
 	try {
-		state.createSchedule({ id: "monitor", label: "Inventory", prompt: "Check inventory", source: "discord", dueAt: 1, notificationPolicy: "changes_only" });
-		state.enqueueDueSchedules(2);
-		await inbox.wake();
-		assert.equal(state.pendingDeliveries().length, 0);
+		routines.createSchedule({ id: "monitor", label: "Inventory", prompt: "Check inventory", source: "discord", dueAt: 1, notificationPolicy: "changes_only" });
+		routines.enqueueDueSchedules(2);
+		await processor.wake();
+		assert.equal(inbox.pendingDeliveries().length, 0);
 		assert.equal(learning.searchHistory("inventory").length, 1);
-		assert.equal(state.getSchedule("monitor")?.lastResult, "Checked inventory: unchanged");
-		state.enqueue({ id: "direct", text: "Check now", source: "discord" });
-		await inbox.wake();
-		assert.deepEqual(state.pendingDeliveries().map((d) => d.id), ["direct"]);
+		assert.equal(routines.getSchedule("monitor")?.lastResult, "Checked inventory: unchanged");
+		inbox.enqueue({ id: "direct", text: "Check now", source: "discord" });
+		await processor.wake();
+		assert.deepEqual(inbox.pendingDeliveries().map((d) => d.id), ["direct"]);
 	} finally {
-		await inbox.close(); learningDb.close(); stateDb.close(); rmSync(root, { recursive: true, force: true });
+		await processor.close(); learningDb.close(); stateDb.close(); rmSync(root, { recursive: true, force: true });
 	}
 });
 
 test("quiet routines cannot spawn independently reporting background jobs", async () => {
 	const registered = new Map<string, { execute: (id: string, params: unknown) => Promise<unknown> }>();
-	delegateExtension({} as never, {} as never, "/unused", () => "", () => false)({
+	jobsExtension({ supervisor: {} as never, store: {} as never, dirs: { rootDir: "/unused", workspacesDir: "/unused" }, canDelegate: () => false })({
 		registerTool(tool: { name: string; execute: (id: string, params: unknown) => Promise<unknown> }) { registered.set(tool.name, tool); },
 	} as never);
 	await assert.rejects(registered.get("delegate")!.execute("call", { brief: "check" }), /Quiet monitors/);

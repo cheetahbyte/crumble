@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { AssistantState } from "../src/state.ts";
+import { Inbox } from "../src/inbox/inbox.ts";
 import { openDatabase } from "../src/db/database.ts";
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -109,17 +109,17 @@ test("headless service persists tenant outboxes, enforces singleton, and release
 	mkdirSync(dirname(alicePath), { recursive: true });
 	mkdirSync(dirname(bobPath), { recursive: true });
 	const aliceSeedDb = openDatabase(alicePath, "assistant");
-	const aliceSeed = new AssistantState(aliceSeedDb);
+	const aliceSeed = new Inbox(aliceSeedDb);
 	aliceSeed.enqueue({ id: "internal:alice-help", text: "/jobs", source: "internal" });
 	aliceSeedDb.close();
 	const bobSeedDb = openDatabase(bobPath, "assistant");
-	const bobSeed = new AssistantState(bobSeedDb);
+	const bobSeed = new Inbox(bobSeedDb);
 	bobSeed.enqueue({ id: "internal:bob-help", text: "/jobs", source: "internal" });
 	bobSeedDb.close();
 	const aliceDb = openDatabase(alicePath, "assistant");
-	const alice = new AssistantState(aliceDb);
+	const alice = new Inbox(aliceDb);
 	const bobDb = openDatabase(bobPath, "assistant");
-	const bob = new AssistantState(bobDb);
+	const bob = new Inbox(bobDb);
 	let crumble: RunningCrumble | undefined;
 	try {
 		crumble = startCrumble(configPath);
@@ -155,7 +155,7 @@ test("headless restart recovers interrupted work without replaying or acknowledg
 	const aliceStatePath = join(dataDir, "tenants", "alice", "assistant.db");
 	mkdirSync(dirname(aliceStatePath), { recursive: true });
 	const aliceSeedDb = openDatabase(aliceStatePath, "assistant");
-	const aliceSeed = new AssistantState(aliceSeedDb);
+	const aliceSeed = new Inbox(aliceSeedDb);
 	aliceSeed.enqueue({ id: "terminal:interrupted-before-boot", text: "DO_NOT_SEND_TO_A_MODEL", source: "terminal" });
 	aliceSeed.markProcessing("terminal:interrupted-before-boot");
 	aliceSeedDb.close();
@@ -165,8 +165,8 @@ test("headless restart recovers interrupted work without replaying or acknowledg
 		await crumble.waitFor("Crumble service ready for 2 tenants");
 		await waitUntil(() => {
 			const stateDb = openDatabase(aliceStatePath, "assistant");
-			const state = new AssistantState(stateDb);
-			try { return state.get("terminal:interrupted-before-boot")?.status === "failed"; }
+			const inbox = new Inbox(stateDb);
+			try { return inbox.get("terminal:interrupted-before-boot")?.status === "failed"; }
 			finally { stateDb.close(); }
 		});
 		assert.doesNotMatch(crumble.output(), /DO_NOT_SEND_TO_A_MODEL|Request was interrupted/);
@@ -174,7 +174,7 @@ test("headless restart recovers interrupted work without replaying or acknowledg
 		crumble = undefined;
 
 		const recoveredDb = openDatabase(aliceStatePath, "assistant");
-		const recovered = new AssistantState(recoveredDb);
+		const recovered = new Inbox(recoveredDb);
 		try {
 			assert.equal(recovered.get("terminal:interrupted-before-boot")?.status, "failed");
 			assert.deepEqual(recovered.pendingDeliveries().map(({ id, source }) => ({ id, source })), [

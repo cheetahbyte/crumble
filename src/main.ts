@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { createDiscordChannel, type DiscordChannel } from "./channels/discord.ts";
-import { loadAppConfig } from "./config.ts";
-import { TenantHost } from "./tenant-host.ts";
-import { prepareTenant } from "./tenants.ts";
+import { DiscordChannel } from "./channels/channels.ts";
+import { loadAppConfig } from "./config/config.ts";
+import { TenantHost } from "./host/host.ts";
+import { prepareTenant } from "./tenants/tenants.ts";
 
 const app = loadAppConfig();
 const pluginsDisabled = process.env.CRUMBLE_DISABLE_PLUGINS === "1";
@@ -51,14 +51,14 @@ process.on("SIGTERM", () => { void stop(); });
 try {
 	for (const config of app.tenants) prepareTenant(config);
 	if (discordToken && Object.keys(discordUsers).length) {
-		discord = createDiscordChannel({
+		discord = new DiscordChannel({
 			token: discordToken, tenantUsers: discordUsers,
 			onMessage: (message) => hosts.get(message.tenantId)?.enqueue(`discord:${message.messageId}`, message.text, "discord"),
 			onError: () => console.error("Discord connection or incoming-message handling failed; see channel availability."),
 		});
 	}
 	const runtime = { runnerKind: app.runnerKind, sandboxImage: app.sandboxImage };
-	for (const config of app.tenants) hosts.set(config.id, new TenantHost({ config, runtime, pluginsDisabled, discord }));
+	for (const config of app.tenants) hosts.set(config.id, new TenantHost({ config, runtime, pluginsDisabled, channel: discord }));
 	if (discord) {
 		await discord.start();
 		console.log("Discord private messages connected.");

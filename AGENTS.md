@@ -12,29 +12,34 @@ Crumble stays small enough that one person can hold it in their head. Every chan
 
 ## Architecture
 
-The core stays thin; capabilities plug in at a small set of seams. Put new behaviour behind an existing seam before inventing a new one.
+Crumble is a modular monolith. Read `docs/modules.md` before adding a module, moving code between modules, or touching a table.
+
+- A module is a folder under `src/`. Its public surface is the file named after it (`src/jobs/jobs.ts`) plus its Pi extension (`extension.ts`). Other modules import only those two files.
+- A module owns its tables. Only its own classes read or write them.
+- Dependencies point one way, in the order listed in `docs/modules.md`. `main.ts` and `host/tenant-process.ts` wire modules together.
+- `src/shared/` holds helpers with no domain knowledge and imports no module.
+
+Capabilities plug in at these seams. Put new behaviour behind an existing seam before inventing a new one.
 
 | Seam | Contract | Implementations |
 | --- | --- | --- |
-| Channel | `src/channels/types.ts` | `src/channels/discord.ts` |
-| Worker runner | `WorkerRunner` in `src/runners.ts` | host, sandbox |
-| Assistant capability | Pi `ExtensionFactory` | `src/extensions/` |
-| Worker tool | Pi extension loaded into the worker | `src/worker/` |
-| User plugin | `PluginExecutor` in `src/plugin-executor.ts` | Docker |
-
-Process shape: `main.ts` starts one `TenantHost` per tenant, which forks a tenant process running `TenantAssistant`. Work is delegated to `Supervisor`, which runs each job as a separate Pi RPC worker.
+| Channel | `Channel` in `src/channels/channels.ts` | `DiscordChannel` |
+| Worker runner | `WorkerRunner` in `src/jobs/runner.ts` | `HostRunner`, `SandboxRunner` |
+| Assistant capability | Pi `ExtensionFactory` in `<module>/extension.ts` | one per module |
+| Worker tool | Pi extension loaded into the worker | `src/jobs/worker/` |
+| User plugin | `PluginExecutor` in `src/plugins/executor.ts` | Docker |
 
 Model requests go through Pi itself. No credential proxies or non-Pi clients.
 
 ## Code style
 
 - A class when there is state or a pluggable role; a plain function for stateless helpers.
-- One concept per file, named after it. Group files by seam in a folder.
+- One concept per file, named after it.
 - Persistence lives in SQLite through Drizzle (`src/db/`). Change a schema, then run `pnpm db:generate`.
 
 ## Tests
 
-Tests live in `test/`, mirroring `src/` (`src/channels/discord.ts` is tested by `test/channels/discord.test.ts`). Test helpers go in `test/support/`. Source folders hold source only.
+Tests live in `test/`, mirroring `src/` (`src/channels/discord.ts` is tested by `test/channels/discord.test.ts`). Tests that span modules sit at the `test/` root. Test helpers go in `test/support/`. Source folders hold source only.
 
 ## Verify
 

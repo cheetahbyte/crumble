@@ -4,10 +4,10 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadAppConfig, createRunner } from "../src/config.ts";
-import { type Job, JobStore } from "../src/jobs.ts";
-import { Supervisor } from "../src/supervisor.ts";
-import { prepareTenant } from "../src/tenants.ts";
+import { loadAppConfig } from "../src/config/config.ts";
+import { createRunner, type Job, JobStore } from "../src/jobs/jobs.ts";
+import { Supervisor } from "../src/jobs/supervisor.ts";
+import { prepareTenant } from "../src/tenants/tenants.ts";
 
 const PHRASE = "Bis bald und alles Gute";
 const BRIEF =

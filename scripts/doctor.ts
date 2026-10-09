@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { loadAppConfig } from "../src/config.ts";
-import { piCli } from "../src/pi-command.ts";
-import { prepareTenant, tenantEnvironment } from "../src/tenants.ts";
+import { loadAppConfig } from "../src/config/config.ts";
+import { piCli } from "../src/shared/pi-command.ts";
+import { prepareTenant, tenantEnvironment } from "../src/tenants/tenants.ts";
 
 const app = loadAppConfig();
 let ready = true;

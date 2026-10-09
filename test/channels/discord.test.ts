@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Events } from "discord.js";
-import { createDiscordChannel } from "../../src/channels/discord.ts";
+import { DiscordChannel } from "../../src/channels/discord.ts";
 
 type Listener = (...args: never[]) => void;
 
@@ -59,7 +59,7 @@ function fakeClient(sendFailureAt?: number, behavior: { emitReady?: boolean; log
 }
 
 const make = (createClient: () => ReturnType<typeof fakeClient>["client"], rest: Record<string, unknown> = {}) =>
-	createDiscordChannel({
+	new DiscordChannel({
 		token: "test-token",
 		tenantUsers: { alice: "user-a", bob: "user-b" },
 		onMessage: () => {},
